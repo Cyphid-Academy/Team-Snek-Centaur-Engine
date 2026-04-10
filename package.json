@@ -1,0 +1,16 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "Team Snek is a team-based multiplayer snake game and the first title on Cyphid Academy's **Battle Bunker educational program** — a system designed to train players to collaborate with one another and AI. Each team is assigned a **Centaur Server**: a bot that controls all the team's snakes by default, with human operators selectively overriding individual snakes when their judgment adds value. There are no purely human teams.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.2.1",
+    "marked": "^18.0.0"
+  }
+}
