@@ -8,7 +8,7 @@
 
 **02-REQ-002**: There shall be exactly one Convex deployment for the entire platform. All persistent platform state lives within this single deployment.
 
-**02-REQ-003**: There shall be exactly one SpacetimeDB instance per active game. A SpacetimeDB instance is transient: it is provisioned when its game is created and torn down after its game ends.
+**02-REQ-003**: There shall be exactly one SpacetimeDB instance per started game. A SpacetimeDB instance is transient: it is provisioned when the game is launched from its Convex game record and torn down after the game ends. Unstarted game records (games in the pre-launch configuration phase) shall not have an associated SpacetimeDB instance.
 
 **02-REQ-004**: SpacetimeDB instances shall be isolated from one another. No SpacetimeDB instance shall have read or write access to the state of any other SpacetimeDB instance.
 
@@ -48,19 +48,23 @@
 
 **02-REQ-018**: The system shall enforce that at most one human operator is the current selector of any given snake, and at most one snake is currently selected by any given operator. Enforcement is the responsibility of the runtime that owns selection state (Convex, per [02-REQ-017]).
 
-**02-REQ-019**: Convex shall orchestrate the provisioning of SpacetimeDB instances for new games and their teardown after games end. (The reducer signatures and provisioning API mechanics are owned by [04] and [05].)
+**02-REQ-019**: Convex shall orchestrate the provisioning of a fresh SpacetimeDB instance at the moment a game is launched, and its teardown after the game ends. (The reducer signatures and provisioning API mechanics are owned by [04] and [05].)
 
-**02-REQ-020**: A SpacetimeDB instance shall not be reused across distinct games. Each game (including each round of a tournament) shall be served by its own freshly provisioned SpacetimeDB instance.
+**02-REQ-020**: A SpacetimeDB instance shall not be reused across distinct games. Each launched game shall be served by its own freshly provisioned SpacetimeDB instance. This rule shall apply uniformly to every game-creation path — including the first game in a room, successor games auto-created after a previous game ends, and every round of a tournament — with no special-case exceptions.
 
 **02-REQ-021**: A SpacetimeDB instance's lifetime shall be bounded to the lifetime of its game. After the game ends and replay data has been persisted ([02-REQ-022]), the instance shall be torn down.
 
 **02-REQ-022**: At game end, Convex shall persist the complete game record by reading the game state log directly from the SpacetimeDB instance. This persistence shall complete before SpacetimeDB instance teardown.
 
+**02-REQ-050**: Prior to launch, a game's configuration shall exist as a mutable record in Convex and may be edited by permitted users. At launch, the configuration shall be frozen and supplied to the newly provisioned SpacetimeDB instance; after launch, the game's configuration shall not be mutable.
+
+**02-REQ-051**: Auto-creation of a successor game after a prior game ends is a Convex-level event. It shall produce a new unstarted, mutable Convex game record inheriting configuration from its predecessor. No SpacetimeDB instance shall be provisioned as part of successor auto-creation; a SpacetimeDB instance is provisioned only when the successor is subsequently launched ([02-REQ-019]). This behavior is uniform across tournament and non-tournament paths.
+
 ---
 
 ### 2.4 Centaur Server Runtime Responsibilities
 
-**02-REQ-023**: A Centaur Server shall hold a live subscription to its game's SpacetimeDB instance for the duration of any game its team is participating in, observing game state in real time.
+**02-REQ-023**: A Centaur Server shall hold a live WebSocket subscription to its game's SpacetimeDB instance for the duration of any game its team is participating in, observing game state in real time.
 
 **02-REQ-024**: A Centaur Server shall hold a live subscription to Convex for its team's Centaur subsystem state, including snake configuration, active Drives, and bot parameters.
 
@@ -102,13 +106,13 @@
 
 ### 2.7 Human Client Topology
 
-**02-REQ-038**: Human operators shall connect directly to their game's SpacetimeDB instance via a real-time bidirectional channel for purposes of (a) observing game state subject to invisibility filtering ([02-REQ-010]) and (b) staging direct moves for human-controlled snakes.
+**02-REQ-038**: Human operators shall connect directly to their game's SpacetimeDB instance via WebSocket for purposes of (a) observing game state subject to invisibility filtering ([02-REQ-010]) and (b) staging direct moves for human-controlled snakes.
 
 **02-REQ-039**: Human operators shall additionally connect to Convex via the standard Convex client to read and write Centaur subsystem state, Drive assignments, and selection state.
 
 **02-REQ-040**: The operator web application shall be served to a team's human members from that team's Centaur Server, not from the Game Platform.
 
-**02-REQ-041**: Human spectators shall connect directly to a game's SpacetimeDB instance via a real-time bidirectional channel using a read-only admission ticket ([03]). Spectator connections shall be subject to invisibility filtering ([02-REQ-010]) on the same terms as opponent team connections.
+**02-REQ-041**: Human spectators shall connect directly to a game's SpacetimeDB instance via WebSocket using a read-only admission ticket ([03]). Spectator connections shall be subject to invisibility filtering ([02-REQ-010]) on the same terms as opponent team connections.
 
 **02-REQ-042**: The operator web application (served by a Centaur Server) and the Game Platform web application are two distinct deployed applications. They shall not share a single deployment artifact.
 
@@ -134,7 +138,7 @@
 
 ## REVIEW Items
 
-### 02-REVIEW-001: Informal spec version drift
+### 02-REVIEW-001: Informal spec version drift — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: `SPEC-INSTRUCTIONS.md` references `team-snek-centaur-platform-spec-v2_1.md` as the informal source of truth, but the file present in the project root is `team-snek-centaur-platform-spec-v2.2.md`. This module's requirements were extracted from v2.2 on the assumption that v2.2 supersedes v2.1.
@@ -144,9 +148,13 @@
 - B: Both versions matter; needs reconciliation pass before module 02 is considered complete.
 **Informal spec reference**: N/A (meta-question).
 
+**Decision**: A — v2.2 is canonical; no carry-forward from v2.1.
+**Rationale**: The v2.2 file is the current informal spec. `SPEC-INSTRUCTIONS.md`'s filename reference is stale and should be updated separately as an instructions-doc edit; it does not invalidate any module authoring done against v2.2.
+**Affected requirements/design elements**: None. This is a meta-question about source material; all of module 02's requirements were extracted from v2.2 and remain as drafted.
+
 ---
 
-### 02-REVIEW-002: "Single Convex deployment" — hard constraint or current implementation?
+### 02-REVIEW-002: "Single Convex deployment" — hard constraint or current implementation? — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: The informal spec (§2, "Convex (Unified Platform)") states "A single Convex instance manages all persistent state." 02-REQ-002 elevates this to a testable architectural requirement. It is unclear whether this is a binding architectural constraint (e.g., precludes future sharding of Convex by region) or a description of the current single-instance deployment.
@@ -156,9 +164,13 @@
 - B: Relax to "Convex is the persistent platform substrate" with no deployment-count claim.
 **Informal spec reference**: §2, "Convex (Unified Platform)".
 
+**Decision**: A — hard "exactly one Convex deployment" constraint.
+**Rationale**: Single-deployment is a load-bearing architectural commitment, not merely a description of current state. Downstream modules (especially [05] for platform-wide tables and [06] for Centaur state) will rely on a single Convex schema namespace and transactional boundary. If the platform ever needs to shard Convex, that is a breaking architectural change that should go through explicit revision of this requirement, not silent relaxation.
+**Affected requirements/design elements**: 02-REQ-002 (unchanged; wording already asserts "exactly one").
+
 ---
 
-### 02-REVIEW-003: Auto-created next-game-in-room implicit STDB provisioning
+### 02-REVIEW-003: Auto-created next-game-in-room implicit STDB provisioning — **RESOLVED**
 
 **Type**: Gap
 **Context**: §9.4 step 7 says "A new game is auto-created in the room inheriting config" after a game ends. 02-REQ-020 asserts STDB instances are not reused across games and each game gets its own freshly provisioned instance. This implies the auto-created next game also gets a new STDB, but the informal spec does not explicitly state this for the non-tournament case. The same principle is stated only for tournament rounds in §9.4 step 4.
@@ -168,9 +180,13 @@
 - B: Non-uniform — some game-creation paths reuse instances. Identify which.
 **Informal spec reference**: §9.4 steps 4 and 7.
 
+**Decision**: A — uniform, with an important clarification that reshapes how game lifecycle is expressed in this module. A SpacetimeDB instance is not provisioned until a game is *started* (launched). Auto-creation of a successor game on Convex produces a new **unstarted, mutable** game record whose configuration is inherited from the predecessor and may be edited further. When that successor is subsequently launched, the Convex config is frozen and passed to a freshly provisioned STDB instance. This entire pattern — pre-launch mutable Convex record, config freeze at launch, fresh STDB per launch — is uniform across tournament and non-tournament paths, and is independent of tournament dynamics.
+**Rationale**: Chris clarified that STDB provisioning is tied to *game start*, not to *game record creation*. This invalidates the original draft's implicit conflation of "game" with "STDB instance" at creation time. The corrected model cleanly separates two lifecycles: a Convex game record (mutable while unstarted, frozen on launch, terminal on end) and an STDB instance (provisioned at launch, torn down after end and replay persist). Making this uniform across all game-creation paths removes special cases for tournament vs non-tournament.
+**Affected requirements/design elements**: 02-REQ-003 (updated to distinguish started/unstarted games and forbid STDB for unstarted), 02-REQ-019 (updated to say "at the moment a game is launched"), 02-REQ-020 (updated to assert uniformity across all game-creation paths explicitly), 02-REQ-050 (new — pre-launch mutable Convex config, frozen at launch), 02-REQ-051 (new — successor auto-creation is Convex-only and uniform across tournament/non-tournament).
+
 ---
 
-### 02-REVIEW-004: STDB instance isolation as proposed addition
+### 02-REVIEW-004: STDB instance isolation as proposed addition — **RESOLVED**
 
 **Type**: Proposed Addition
 **Context**: 02-REQ-004 asserts that SpacetimeDB instances are mutually isolated. This is implicit in the "one per active game" topology but is not stated explicitly anywhere in the informal spec. It is being added as a foundational architectural invariant on the basis that any contrary design would have major security and correctness implications.
@@ -180,9 +196,13 @@
 - B: Drop as redundant with "one per active game" — instance isolation is presumed but not asserted.
 **Informal spec reference**: N/A (proposed addition).
 
+**Decision**: A — keep as a hard requirement.
+**Rationale**: Instance isolation is load-bearing for security reasoning (a compromised Centaur Server for game X must not be able to affect game Y's state) and is too important to leave implicit. Making it explicit at the architectural level anchors downstream [04] design choices about authentication scope and subscription boundaries.
+**Affected requirements/design elements**: 02-REQ-004 (unchanged from initial draft).
+
 ---
 
-### 02-REVIEW-005: "Real-time bidirectional channel" vs naming the transport
+### 02-REVIEW-005: "Real-time bidirectional channel" vs naming the transport — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: §2 of the informal spec explicitly names WebSocket as the transport between SpacetimeDB and its clients (Centaur Servers, web clients). The spec instructions forbid requirements from referencing implementation artifacts. The current draft uses neutral phrasing ("real-time bidirectional channel") rather than naming WebSocket, on the basis that the choice of transport is an implementation concern of the SpacetimeDB platform itself, not a domain requirement.
@@ -191,3 +211,7 @@
 - A: Neutral phrasing — transport is implementation detail. (Current draft.)
 - B: Name WebSocket as a binding constraint at the requirements level.
 **Informal spec reference**: §2, "Infrastructure Topology" diagram and "SpacetimeDB (Game Runtime)".
+
+**Decision**: B — name WebSocket explicitly in client-connection requirements.
+**Rationale**: SpacetimeDB itself is a hard architectural choice for the game runtime (not an implementation detail), and the WebSocket client protocol is imposed by SpacetimeDB. Since the platform commits to SpacetimeDB, it inherits the WebSocket constraint, and that constraint should be visible in requirements so that downstream modules ([04], [09]) plan around it rather than presuming transport flexibility that does not exist. The "no implementation artifacts" rule applies to internal implementation choices (libraries, table names), not to the external contract surface of a chosen runtime.
+**Affected requirements/design elements**: 02-REQ-023 (Centaur Server → STDB, now "WebSocket subscription"), 02-REQ-038 (operator → STDB, now "via WebSocket"), 02-REQ-041 (spectator → STDB, now "via WebSocket"). 02-REQ-009 was left behavioral ("real-time state synchronization without per-turn polling") because it describes what the runtime delivers, not how a specific client connects; flag if this should also be updated.

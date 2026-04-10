@@ -252,7 +252,7 @@
 
 ---
 
-### 03-REVIEW-007: Asymmetric signing for two different validation contexts
+### 03-REVIEW-007: Asymmetric signing for two different validation contexts — **RESOLVED**
 
 **Type**: Proposed Addition
 **Context**: 03-REQ-041 elevates the implementation pattern described in the informal spec — RSA for Centaur credentials (so Convex can self-verify via JWKS) and HMAC for admission tickets (so each SpacetimeDB instance holds only the secret for its own instance) — to a requirements-level invariant about independence of compromise. This is a proposed addition, not explicit in the informal spec. The justification is defense-in-depth: if either scheme is broken, the other continues to function.
@@ -262,9 +262,13 @@
 - B: Drop from Requirements; describe the scheme choice in Design only.
 **Informal spec reference**: §3, "Centaur Server Authentication" and "SpacetimeDB Admission Tickets".
 
+**Decision**: A. Independence of compromise between the Centaur Server credential signing scheme and the admission ticket signing scheme is an intended architectural invariant.
+**Rationale**: Elevating this to a requirement means a future design change that (for example) unified the two signing paths under a single secret would be visible as a requirements violation rather than slipping in as an implementation simplification. The inconvenience of carrying this as a requirement is small; the cost of losing defense-in-depth silently is large. Note: this decision interacts with resolved 03-REVIEW-001 (cryptographic primitives kept neutral in requirements) — 03-REQ-041 currently names RSA/HMAC in a parenthetical, which is borderline for REVIEW-001's resolution. Consider demoting those parentheticals to Design notes when module 03 enters Phase 2; the load-bearing invariant is "independence of compromise," not the specific primitives.
+**Affected requirements/design elements**: None — current 03-REQ-041 conforms. Flagged follow-up: reconsider parenthetical primitive names in 03-REQ-041 during Phase 2 to fully align with REVIEW-001's resolution.
+
 ---
 
-### 03-REVIEW-008: Convex as sole issuer (03-REQ-037) vs healthcheck/library extension surface
+### 03-REVIEW-008: Convex as sole issuer (03-REQ-037) vs healthcheck/library extension surface — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: 03-REQ-037 asserts Convex is the sole issuer of all credentials. But 02-REQ-029 requires Centaur Servers to expose a healthcheck endpoint the platform calls. If that healthcheck requires no authentication, 03-REQ-037 is consistent; if it requires a credential, something must issue it. The current draft assumes healthchecks are unauthenticated on the basis that they only need to verify reachability.
@@ -275,9 +279,13 @@
 - C: Authenticated with a Convex-issued token delivered via a different mechanism.
 **Informal spec reference**: §2, "Centaur Servers"; §3.
 
+**Decision**: A. Centaur Server healthcheck calls are unauthenticated; they verify only reachability.
+**Rationale**: Healthchecks answer a single question — "is the server reachable and responsive?" — which needs no identity binding. Keeping them unauthenticated preserves 03-REQ-037 (Convex remains sole issuer of all credentials) and 03-REQ-012 (no shared secret at registration) without special-casing. The attack surface is minimal: a healthcheck endpoint that only returns liveness information leaks no team state. If a future change extends the healthcheck payload to include sensitive information (e.g., current game identifiers, snake state summaries), revisit this decision because the threat model would change. The healthcheck endpoint should be kept deliberately information-free to avoid that coupling.
+**Affected requirements/design elements**: None — current draft conforms. Flagged guidance for Phase 2 Design and for [02]'s treatment of healthchecks: the healthcheck response payload should be minimal and contain no team-scoped state, so that its unauthenticated status remains safe.
+
 ---
 
-### 03-REVIEW-009: Spectator eligibility and rate-limiting
+### 03-REVIEW-009: Spectator eligibility and rate-limiting — **RESOLVED**
 
 **Type**: Gap
 **Context**: 03-REQ-026 permits any authenticated human to obtain a spectator admission ticket, deferring eligibility rules to [09]. The informal spec §8.5 says "Any authenticated user can spectate a game in progress" but does not address private games, room-level visibility settings, or abuse (a single human requesting thousands of spectator tickets). This may be adequately covered by [09]; flagging to ensure it is not silently dropped between modules.
@@ -286,3 +294,7 @@
 - A: All spectator-access policy lives in [09]; [03] only defines the ticket mechanism. (Current draft.)
 - B: [03] owns at least a rate-limit or abuse-prevention requirement on admission ticket issuance.
 **Informal spec reference**: §8.5; §3.
+
+**Decision**: A. Module [03] defines only the spectator ticket mechanism; all spectator eligibility policy (private games, room visibility, rate-limiting, abuse prevention) belongs to [09] or to whichever later module owns the feature.
+**Rationale**: Keeping [03] narrowly scoped to identity and credential mechanics makes its boundary clean and avoids duplicating policy. If [09]'s Phase 1 author encounters this and needs [03] to carry a rate-limit requirement, that can be negotiated as a cross-module requirement change at that point — this decision is not load-bearing against such a change. The risk being accepted here is that [09]'s author might assume spectator rate-limiting is handled upstream in [03] and silently drop it; to mitigate, a cross-reference note should be carried forward.
+**Affected requirements/design elements**: None — current 03-REQ-026 conforms. Cross-module reminder: when [09] Phase 1 begins, verify that spectator eligibility rules (visibility, rate-limiting, abuse prevention) are explicitly captured there. If [09]'s author needs [03] to participate in any of that, a new REVIEW item should be raised against this module.
