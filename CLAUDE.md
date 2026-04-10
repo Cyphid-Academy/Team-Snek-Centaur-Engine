@@ -20,7 +20,7 @@ Intermediate/temporary files (e.g. pipeline artifacts not intended for the user)
 
 Progress on the modular spec (see `SPEC-INSTRUCTIONS.md` for the phase/module framework):
 
-- **Module 01 — game-rules**: Phase 1 (Requirements) drafted.
+- **Module 01 — game-rules**: Phase 1 (Requirements) approved, then substantially revised post-approval via 01-REVIEW-014 (frozen → start-of-turn wording), 01-REVIEW-015 (stacking removed, symmetric buff/debuff state model with ≤1-per-family invariant, derived `invulnerabilityLevel`/`isVisible` functions, team-wide family-scoped cancellation), and 01-REVIEW-016 (invisibility collector remains visible — correcting a formal-spec-only mistake that didn't match user intent). Phase 2 (Design + Exported Interfaces) drafted and updated to reflect all three rewrites. REVIEW state: 2 open items (012 game-config ranges, 013 `GameState` aggregate shape) awaiting human resolution; 5 resolved (010 source-attribution dissolved by 015, 011 module-local `Agent`, 014 frozen wording, 015 stacking/state-model redesign, 016 invisibility-collector visibility fix).
 - **Module 02 — platform-architecture**: Phase 1 (Requirements) drafted.
 - **Module 03 — auth-and-identity**: Phase 1 (Requirements) drafted.
 - **Module 04 — stdb-engine**: Phase 1 (Requirements) drafted.
@@ -29,6 +29,6 @@ Progress on the modular spec (see `SPEC-INSTRUCTIONS.md` for the phase/module fr
 - **Module 07 — bot-framework**: Phase 1 (Requirements) drafted.
 - **Module 08 — centaur-server-app**: Phase 1 (Requirements) drafted.
 - **Module 09 — platform-ui**: Phase 1 (Requirements) drafted.
-- No module has entered Phase 2 yet.
+- Module 01 is the only module in Phase 2 so far.
 
 Update this list as modules advance.
