@@ -38,7 +38,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ### 4.3 Game Initialisation
 
-**04-REQ-013**: The runtime shall expose a **privileged initialisation operation** that may be called exactly once per instance, before any connection is admitted, by the Convex orchestration path described in [02-REQ-019]. The operation shall accept, at minimum: the game configuration per [01]'s configurable parameters and [09.3] of the informal spec, the participating-team roster per [03-REQ-039], the admission-ticket validation secret per [03-REQ-022], and the initial chess-timer budget per team per [01-REQ-035].
+**04-REQ-013**: The runtime shall expose a **privileged initialisation operation** that may be called exactly once per instance, before any connection is admitted, by the Convex orchestration path described in [02-REQ-019]. The caller shall be authenticated per [03-REQ-048]. The operation shall accept, at minimum: the game configuration per [01]'s configurable parameters and [09.3] of the informal spec, the participating-team roster per [03-REQ-039], the admission-ticket validation secret per [03-REQ-022], and the initial chess-timer budget per team per [01-REQ-035].
 
 **04-REQ-014**: Successful completion of the initialisation operation shall leave the runtime in a state where (a) the static board layout ([01-REQ-008] through [01-REQ-013]) is written, (b) each snake's initial state ([01-REQ-020], [01-REQ-021]) is written as the turn-0 snapshot, (c) initial food placements ([01-REQ-017]) are written as spawn-turn-0 items, (d) each team's initial time budget ([01-REQ-035]) is recorded, (e) the admission-ticket validation secret is available for use by the admission path (Section 4.4), and (f) the participating-team roster and per-team authorised human email addresses (per [03-REQ-023(d)(e)]) are available for use by the admission path.
 
@@ -108,7 +108,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-039**: The `stagedBy` value captured in movement events shall be the opaque connection identifier of the most recent writer per 04-REQ-026, without any interpretation, mapping, or substitution by the runtime. (Satisfies [03-REQ-032]'s no-interpretation constraint.)
 
-**04-REQ-040**: If a snake had no staged move at the moment of turn resolution and its direction was determined by the Phase 1 fallback rule of [01-REQ-042], the movement event for that snake shall distinguish the fallback case from the staged-move case. The `stagedBy` field for fallback-determined moves shall not be populated with a connection identifier; the distinction shall be explicit in the event record. The fallback case covers both (a) subsequent-turn fallback to `lastDirection` per [01-REQ-042(b)] and (b) turn-0 random fallback per [01-REQ-042(c)] when no move was staged.
+**04-REQ-040**: If a snake had no staged move at the moment of turn resolution and its direction was determined by the Phase 1 fallback rule of [01-REQ-042], the movement event for that snake shall distinguish the fallback case from the staged-move case. The `stagedBy` field of the movement event shall be **nullable**; it shall be populated with the connection identifier of the writer whose staged move was consumed when the move was staged, and shall be **null** when the move was determined by fallback. The fallback case covers both (a) subsequent-turn fallback to `lastDirection` per [01-REQ-042(b)] and (b) turn-0 random fallback per [01-REQ-042(c)] when no move was staged. (Resolves 04-REVIEW-002.)
 
 **04-REQ-041** *(negative)*: Once turn resolution for turn `T` has committed, the runtime shall not accept further staged moves or turn-over declarations attributable to turn `T`. Any such operations received after commitment shall either be treated as pertaining to turn `T+1` (if they arrive after the new turn has begun) or rejected, at the runtime's discretion; the runtime shall not silently reorder them into turn `T`'s committed state.
 
@@ -120,7 +120,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-043**: The runtime shall emit, as part of each turn's atomic resolution transaction, a set of **turn events** covering every observable outcome of that turn. The set of event kinds shall be a **closed enumeration** — no extensibility mechanism shall permit new event kinds to be added without a deliberate revision of this requirement. The closed set shall comprise at minimum:
 
-- (a) **Snake movement**: for each snake that executed a move in Phase 2, a record capturing the snake identifier, the originating cell, the destination cell, the direction, whether the tail was retained (growth), and `stagedBy` per 04-REQ-039 and 04-REQ-040.
+- (a) **Snake movement**: for each snake that executed a move in Phase 2, a record capturing the snake identifier, the originating cell, the destination cell, the direction, whether the tail was retained (growth), and `stagedBy` per 04-REQ-039 and 04-REQ-040 (nullable; null indicates a fallback-determined move).
 - (b) **Snake death**: for each snake that died in Phase 3, Phase 5, or other phase of the pipeline, a record capturing the snake identifier, the cause of death (wall, hazard, self-collision, body-collision, head-to-head, starvation), the location, and — where applicable — the identifier of the snake responsible (e.g., the attacker in a body-collision kill).
 - (c) **Severing**: for each severing outcome per [01-REQ-044c], a record capturing the attacker identifier, the victim identifier, the contact cell, and the number of segments removed.
 - (d) **Food consumption**: for each snake that consumed food in Phase 5, a record capturing the snake identifier, the cell, and the resulting health value.
@@ -129,10 +129,11 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - (g) **Potion spawning**: for each potion item spawned in Phase 8, a record capturing the new item's identifier, cell, and potion type.
 - (h) **Effect application**: for each effect that was moved from `pendingEffects` to `activeEffects` in Phase 9, a record capturing the affected snake, effect type, and expiry turn.
 - (i) **Effect cancellation**: for each effect that was removed in Phase 9 — whether by disruption-triggered cancellation per [01-REQ-031] or by natural expiry per [01-REQ-050] — a record capturing the affected snake, effect type, and the reason (`disruption` or `expiry`).
+- (j) **Hazard damage**: for each surviving snake that took hazard damage in Phase 5b without dying that turn, a record capturing the snake identifier, the hazard cell, the damage amount applied, and the resulting health value. Snakes that die *from* hazard damage in Phase 5 are covered by the death event (b) with cause `hazard` and shall not additionally emit a hazard_damage event. (Added per 04-REVIEW-003 resolution.)
 
 **04-REQ-044**: Each turn-event record shall include enough information for a replay or animation client to visualise the associated outcome without re-executing turn resolution. In particular, event records shall not require the client to diff successive snake-state snapshots to recover information that the event describes (e.g., a death event shall carry the cause explicitly rather than requiring the client to infer it from a snake's alive-to-dead transition).
 
-**04-REQ-045**: The set of emitted events for a given turn shall be totally ordered within that turn in a way that reflects the phase order and, within a phase, a deterministic intra-phase ordering derivable from the turn seed ([01-REQ-060]) and stable across independent replays of the same game seed.
+**04-REQ-045**: The set of emitted events for a given turn shall be totally ordered within that turn. The ordering shall reflect the phase order defined by [01]'s pipeline (Phase 1 events before Phase 2 events, and so on). Within a single phase, events shall be ordered by ascending snake identifier of the primary subject of each event (the moving snake for movement, the dying snake for death, the collector for potion collection, the eater for food consumption, the affected snake for effect application/cancellation/hazard damage, and so on); phase-internal events that have no snake subject (food spawning, potion spawning) shall follow all snake-subject events of the same phase in ascending item-identifier order. The resulting total order shall be stable across independent replays of the same game seed. (Resolves 04-REVIEW-004.)
 
 **04-REQ-046** *(negative)*: The runtime shall not emit turn events that imply the existence of game mechanics not specified in [01]. The closed enumeration of 04-REQ-043 is exhaustive for the Team Snek ruleset as specified in this spec version.
 
@@ -188,15 +189,17 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved.
 
-**04-REQ-061**: After game-end detection, the runtime shall remain available to an **authorised replay-export client** (the Convex orchestration path referred to by [02-REQ-022]) for a bulk read of all data needed to reconstruct a complete replay. "All data needed" comprises the static board layout, the game configuration seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4 in a form that permits `stagedBy` connection identifiers to be resolved to human emails or Centaur Server team references per [03-REQ-045].
+**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout, the game configuration seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4 in a form that permits `stagedBy` connection identifiers to be resolved to human emails or Centaur Server team references per [03-REQ-045]. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied.
 
-**04-REQ-062**: The replay-export client shall be authenticated as the Convex platform runtime. The runtime shall not permit any other caller to retrieve the bulk replay export. The mechanism of this authentication is a matter for [03] / [05] to specify; 04 requires only that the privilege be distinct from ordinary gameplay admission.
+**04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance via a privileged operation authenticated per [03-REQ-048]. The notification mechanism shall use best-practice platform affordances (e.g., SpacetimeDB's webhook subscription mechanism if available, with Convex having registered its interest at game-initialisation time); specifics are a Phase 2 Design concern. The notification need not itself carry the complete historical record; its minimum obligation is to convey that the game has ended and to identify the instance.
+
+**04-REQ-062**: The replay-export client shall be authenticated as the Convex platform runtime per [03-REQ-048]. The runtime shall not permit any other caller to retrieve the bulk replay export. 04 requires only that the privilege be distinct from ordinary gameplay admission; detailed credential mechanics are owned by [03].
 
 **04-REQ-063**: The runtime shall not be torn down until the replay-export client has confirmed successful retrieval of the replay data. Teardown is a Convex-orchestrated operation per [02-REQ-021]; 04's obligation is to remain available until export completes and to not silently discard data that has not yet been read.
 
 **04-REQ-064**: During the post-game-end window in which replay export is in progress, visibility filtering (Section 4.9) shall not be applied to the replay-export client's queries. The replay export is the complete game record, including all previously invisible snakes' states, because downstream replay systems need the full game log regardless of which team's perspective an end viewer later chooses.
 
-**04-REQ-065** *(negative)*: The runtime shall not push or post replay data to any external system on its own initiative. Replay export is pull-based: Convex reads, the runtime serves.
+**04-REQ-065** *(negative)*: The runtime shall not spontaneously transmit gameplay or replay data to any external system during gameplay. Game-end notification ([04-REQ-061a]) and any bundled or runtime-initiated delivery of the historical record to Convex at game end ([04-REQ-061]) are explicitly permitted and do not constitute violations of this requirement.
 
 ---
 
@@ -216,7 +219,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ## REVIEW Items
 
-### 04-REVIEW-001: Scheduled reducer for clock expiry as an architectural commitment
+### 04-REVIEW-001: Scheduled reducer for clock expiry as an architectural commitment — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: The informal spec (§10, `resolve_turn` bullet) mentions that turn resolution is "also triggered by clock expiry (scheduled reducer at max turn time as a fallback)". This sounds like an implementation detail — a scheduled reducer is a SpacetimeDB-specific mechanism. 04-REQ-032 abstracts this to "the runtime shall autonomously detect when a team's per-turn clock has reached zero... and treat that event as an implicit turn-over declaration". Whether this is correctly abstract-or-binding depends on whether alternative clock-expiry mechanisms (polling, push-from-Convex, wall-clock events on reducer entry) are acceptable substitutes.
@@ -226,9 +229,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - B: Strengthen to require an internally scheduled mechanism (no external triggering of clock-expiry fallback), so that Convex cannot be in the loop for clock-expiry detection even as a fallback. This would preserve [04-REQ-068]'s "no external systems during gameplay" invariant more crisply.
 **Informal spec reference**: §10, `resolve_turn` bullet.
 
+**Decision**: Option A — keep 04-REQ-032 abstract; clock-expiry detection mechanism is a Phase 2 concern.
+**Rationale**: [04-REQ-068]'s "no external systems during gameplay" invariant already binds the runtime to internal-only triggering of clock expiry (Convex cannot be consulted during gameplay), so Option B's stricter wording adds no constraint that isn't already present. If a future change weakens [04-REQ-068], this decision should be revisited.
+**Affected requirements/design elements**: None — 04-REQ-032 stands as drafted.
+
 ---
 
-### 04-REVIEW-002: `stagedBy` sentinel for fallback-determined moves
+### 04-REVIEW-002: `stagedBy` sentinel for fallback-determined moves — **RESOLVED**
 
 **Type**: Gap
 **Context**: 04-REQ-040 requires movement events to distinguish fallback-determined moves (where no player or Centaur Server staged a move for a snake, and [01-REQ-042]'s fallback rule applied) from staged moves. The informal spec's turn event schema (§14) defines `snake_moved` with a mandatory `stagedBy: Identity` field, which leaves no room for "no staged move was consumed". Possible resolutions: (a) make `stagedBy` nullable in the event schema and use null for fallback; (b) use a distinguished "runtime fallback" sentinel Identity value; (c) split the event into two distinct event kinds. The current draft punts to design ("the distinction shall be explicit in the event record") but the representation affects the closed event set of 04-REQ-043.
@@ -239,9 +246,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - C: Split `snake_moved` into `snake_moved_staged` and `snake_moved_fallback` as two event kinds in the closed set.
 **Informal spec reference**: §14, `snake_moved` event.
 
+**Decision**: Option A — `stagedBy` is nullable and null denotes a fallback-determined move.
+**Rationale**: Simplest of the three and does not inflate the closed event set. Option B (sentinel Identity) leaks a magic value into a field whose type semantics are meant to be opaque per [03-REQ-032]. Option C doubles the movement event kind with no information gain. Assumes fallback is the only case in which a movement event has no staging writer; if a future rule change introduces additional null-stagedBy cases (e.g., runtime-initiated forced moves), the decision still holds but the set of null-meanings should be re-surveyed.
+**Affected requirements/design elements**: 04-REQ-040 rewritten to make nullable-with-null-for-fallback explicit. 04-REQ-043(a) annotated to note the nullable typing of `stagedBy` in movement events.
+
 ---
 
-### 04-REVIEW-003: Completeness of the closed event set
+### 04-REVIEW-003: Completeness of the closed event set — **RESOLVED**
 
 **Type**: Gap
 **Context**: 04-REQ-043 enumerates the closed event set as (a) movement, (b) death, (c) severing, (d) food consumption, (e) potion collection, (f) food spawning, (g) potion spawning, (h) effect application, (i) effect cancellation. This mirrors informal spec §14 closely but differs in one way: §14 does not include an explicit "severing" event kind — it folds severing into `snake_severed` as a combat event — which the current draft also uses, so that matches. However, §14 also lacks an event for **hazard damage applied to a snake that survives the hazard** (i.e., Phase 5b without Phase 5d death). Under the current draft, a snake that enters a hazard cell, loses health, and survives the turn produces no dedicated event — a replay client would have to diff health between turns to detect hazard application. This is acceptable for pure visualisation (hazard cells are visible terrain; the snake's health change is visible in its state snapshot) but blocks downstream analytics that would want an explicit hazard-damage event. Also missing: an event for the `ateLastTurn`-driven growth retention in Phase 2 (the growth bit is folded into the `snake_moved.grew` flag, which is sufficient if the growth/movement timing is well-understood by clients).
@@ -252,9 +263,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - C: Add both `hazard_damage` and `health_tick` events for completeness, at the cost of event volume.
 **Informal spec reference**: §14.
 
+**Decision**: Option B — add `hazard_damage` as a tenth event kind `(j)` in 04-REQ-043, emitted for each surviving snake that took hazard damage in Phase 5b.
+**Rationale**: Option A was in tension with 04-REQ-044 ("event records shall not require the client to diff successive snake-state snapshots to recover information that the event describes"). Hazard damage to a surviving snake is exactly the kind of state change whose signal would otherwise be carried only by a snapshot diff. Option B also unlocks downstream analytics. Option C is rejected as gratuitous event-volume overhead — starvation is already carried by the death event (b) with cause `starvation`, and a per-turn `health_tick` event would be redundant with per-turn snake state.
+**Affected requirements/design elements**: 04-REQ-043 extended with entry `(j) Hazard damage`. Informal spec §14's closed set is now superseded by [04-REQ-043] on this point. **Downstream impact**: when [08] team replay viewer and [09] platform replay viewer consume the closed event set, they must include hazard_damage in their renderers.
+
 ---
 
-### 04-REVIEW-004: Intra-phase event ordering determinism
+### 04-REVIEW-004: Intra-phase event ordering determinism — **RESOLVED**
 
 **Type**: Ambiguity
 **Context**: 04-REQ-045 requires events within a turn to be "totally ordered... reflects the phase order and, within a phase, a deterministic intra-phase ordering derivable from the turn seed". The turn seed is well-defined by [01-REQ-060]. But within a phase, multiple snakes may produce events (e.g., three snakes all eat food in Phase 5). The order in which those events are written affects replay bit-exactness for tooling that compares event streams. The informal spec does not specify intra-phase ordering rules. Possibilities include: (a) snake ID order; (b) turn-seed-shuffled order; (c) the order in which the pipeline's internal iteration happens to process snakes (implementation-defined). Committing to a specific rule at the requirements level affects what tests can assert.
@@ -265,9 +280,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - C: Implementation-defined — only determinism across replays is required, not a specific order. (This is what 04-REQ-045 currently implies.)
 **Informal spec reference**: §14, no explicit ordering rule.
 
+**Decision**: Option A — ascending snake identifier for snake-subject events; ascending item identifier for item-spawn events (food/potion spawning), which follow all snake-subject events within the same phase.
+**Rationale**: Simplest, most debuggable, and requires no seed-derived ordering logic. Option B's concern about "low-ID snakes always appearing first" is cosmetic — event streams are not a fairness mechanism and clients that care about fairness are reading game state, not event ordering. Option C would leave the ordering unspecified enough that two conforming implementations could produce bit-different event streams for the same game seed, which defeats the purpose of 04-REQ-069's determinism commitment for cross-implementation test comparison. This decision assumes snake identifiers are stable per game (they are, per [01] Phase 2 typing). If a future change introduces multi-subject events or subject-less events beyond item spawns, the ordering rule will need extension.
+**Affected requirements/design elements**: 04-REQ-045 rewritten to make the ascending-snake-ID rule explicit and to specify the fallback for events without a snake subject.
+
 ---
 
-### 04-REVIEW-005: Replay-export authorisation mechanism
+### 04-REVIEW-005: Replay-export authorisation mechanism — **RESOLVED**
 
 **Type**: Gap
 **Context**: 04-REQ-062 says the replay-export client is "authenticated as the Convex platform runtime" and defers the mechanism to [03] / [05]. [03]'s current draft (Sections 3.3 and 3.4) covers Centaur Server credentials and admission tickets for gameplay, but does not specify how Convex authenticates *itself* to the SpacetimeDB instance for privileged operations like initialisation (04-REQ-013) or replay export (04-REQ-061). The informal spec §10 mentions "validates admin token embedded at deploy time" for `initialize_game`. This is a cross-module gap: does the privileged Convex-to-runtime authentication use the admission-ticket HMAC secret with a distinguished role ("platform"), a separate admin token seeded at deploy time, or yet another mechanism?
@@ -278,31 +297,42 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - C: In [05] as part of orchestration — Convex is the initiator and owns the mechanism.
 **Informal spec reference**: §10 "validates admin token embedded at deploy time"; §9.4 step 4.
 
+**Decision**: Option A — [03] owns the requirement. A single new requirement in [03] is sufficient; beyond-best-practice security detail is out of scope for Phase 1.
+**Rationale**: [03] is already the module that owns every other credential in the system, so placing this there keeps credential semantics in one place. Only unusual credential situations (e.g., Centaur Servers without their own Google auth) warrant extensive requirements-level elaboration; Convex-to-SpacetimeDB is a standard platform-to-platform authentication situation that best-practice affordances of each platform can handle, so the requirement just needs to state that the capability exists.
+**Affected requirements/design elements**: Added as [03-REQ-048] in a new subsection §3.9 "Convex Access to the SpacetimeDB Runtime". Cross-references to [03-REQ-048] added to [04-REQ-013] (privileged initialisation), [04-REQ-061] (end-of-game historical record retrieval), [04-REQ-061a] (game-end notification subscription), and [04-REQ-062] (replay-export authentication). [05-REQ-032] and [05-REQ-040] may likewise reference [03-REQ-048] when [05] is next touched; not done as part of this resolution because those edits are out of scope for module 04.
+
 ---
 
 ### 04-REVIEW-006: Game-end detection granularity (turn commit vs Phase 10 completion)
 
 **Type**: Ambiguity
-**Status**: **Narrowed** (2026-04-10) after reading [05] Phase 1 draft. The ownership question ("who detects game-end, STDB or Convex?") is now settled — [05-REQ-038] commits Convex to *observing* the runtime for the terminal state, so detection is a Convex-side read of a runtime-emitted signal. The remaining question is narrower: what shape does that signal take on the runtime side?
-**Context**: 04-REQ-060 says game-end treatment applies "after a win condition has been detected in Phase 10". Phase 10 is inside the atomic turn-resolution transaction (04-REQ-037). Game-end detection happens as part of the same transaction that commits the final turn's state. The runtime then needs to transition into "no more turns" mode *after* the commit.
-**Remaining question**: Does the runtime emit a distinct terminal event (e.g., `game_ended`) as part of the final turn's commit, or is game-end derived by Convex from a flag on the final turn-resolved record? The former is more explicit and testable; the latter is lighter weight.
+**Context**: 04-REQ-060 says game-end treatment applies "after a win condition has been detected in Phase 10". Phase 10 is inside the atomic turn-resolution transaction (04-REQ-037). So in practice, game-end detection happens as part of the same transaction that commits the final turn's state. The runtime then needs to transition into "no more turns" mode *after* the commit. The current wording is not explicit about whether game-end rejection of gameplay operations begins immediately on the commit or whether there is a short tail-end window. This matters for edge cases like a staged move arriving concurrent with the final turn's commit.
+**Question**: Should the transition to game-ended state be explicitly tied to the commit point of the win-detecting turn, and should in-flight operations arriving during or after commit be explicitly specified?
 **Options**:
-- A: Runtime emits a dedicated terminal event within the final turn's commit. Convex observes this event.
-- B: Runtime sets a "terminal" flag on the turn record itself. Convex derives game-end from the flag.
-- C: Runtime does both: a dedicated terminal event *and* a flag, for redundancy.
-**Also open**: whether in-flight staged moves arriving after commit are rejected explicitly (currently implied by the current draft, not stated).
-**Informal spec reference**: §5 Phase 10; §9.4 step 7; [05-REQ-038].
+- A: Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves that arrive after commit are rejected as "game over". (Implied by current draft.)
+- B: Make this explicit in the requirements — add a clause to 04-REQ-060 stating the commit boundary.
+**Informal spec reference**: §5 Phase 10; §9.4 step 7.
+
+**Update (2026-04-10, after reading [05] Phase 1 draft and subsequent architectural clarification)**: A related question has been settled upstream; this item is not yet fully resolved, but the scope has shifted.
+- **Settled**: [05-REQ-038] commits Convex to learning of the terminal state. Per 04-REQ-061a, detection is a runtime→Convex push via best-practice platform affordances (e.g., a SpacetimeDB webhook Convex subscribed to at game initialisation), not a live-subscription read. Convex does not hold a live STDB subscription during gameplay.
+- **Still open**: Whether the commit-to-game-ended transition needs explicit wording in 04-REQ-060 (original A/B question). Also: does the game-end notification payload carry any state beyond instance identification, or is it a bare signal that Convex follows up on by retrieving the record per 04-REQ-061?
 
 ---
 
-### 04-REVIEW-007: Historical record size and retention semantics during long games
+### 04-REVIEW-007: Historical record size and retention semantics during long games — **RESOLVED**
 
 **Type**: Gap
-**Status**: **Resolved** (2026-04-10) after reading [05] Phase 1 draft.
-**Context**: 04-REQ-004 requires the historical record to support reconstruction of any past turn in the game. Question was whether in-instance retention is unbounded and what retention bound applies to the runtime itself.
-**Decision**: Option A — unbounded retention for the full life of the game instance. Instance lifetime is bounded by [05-REQ-037] (teardown occurs only after [05-REQ-040] has read the complete append-only game record and persisted it to Convex), and replay viewing never consults the runtime after teardown per [05-REQ-044]. Post-teardown retention is Convex's concern, not this module's.
-**Rationale**: [05] commits Convex to reading the full record in one pass at game end before instance teardown. A runtime-side retention cap would break that commitment. Performance of holding large histories in a single instance is a Phase 2 concern, not a requirements-level concern.
+**Context**: 04-REQ-004 requires the historical record to support reconstruction of any past turn in the game. For a game with `maxTurns = 1000`, this could imply a large working set held inside a SpacetimeDB instance. The informal spec does not address retention bounds or memory pressure. Two sub-questions: (a) is unbounded historical retention part of the runtime's contract, or is there an implicit cap? (b) if the runtime has a cap, do clients lose the ability to scrub to very early turns?
+**Question**: Does the runtime commit to unbounded in-game historical retention, and if so, is this a performance concern that Phase 2 design should address?
+**Options**:
+- A: Unbounded retention for the full life of the game, regardless of duration. Performance is Phase 2's concern.
+- B: Retention bounded by configuration; early turns evicted from live queries but still present in the eventual replay export.
+- C: Retention unbounded for replay-export purposes but optionally windowed for live subscription queries.
 **Informal spec reference**: §10.
+
+**Decision**: Option A — unbounded retention for the full life of the game instance.
+**Rationale**: Resolved after reading [05] Phase 1 draft. Instance lifetime is bounded by [05-REQ-037] (teardown occurs only after [05-REQ-040] has read the complete append-only game record and persisted it to Convex), and replay viewing never consults the runtime after teardown per [05-REQ-044]. [05] commits Convex to reading the full record in one pass at game end; a runtime-side retention cap (Option B) would break that commitment. Option C's subscription-windowing is a Phase 2 optimisation, not a requirements-level concern. Post-teardown retention is Convex's concern, not this module's. If a future change to [05] adopts streaming/incremental replay export rather than a single end-of-game read, this decision should be revisited.
+**Affected requirements/design elements**: None — 04-REQ-004 stands as drafted.
 
 ---
 

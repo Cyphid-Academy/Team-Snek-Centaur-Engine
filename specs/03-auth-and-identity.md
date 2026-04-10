@@ -146,6 +146,12 @@
 
 ---
 
+### 3.9 Convex Access to the SpacetimeDB Runtime
+
+**03-REQ-048**: The Convex platform runtime shall be able to authenticate itself to the SpacetimeDB hosting platform for the purpose of provisioning and tearing down per-game instances ([02-REQ-020], [02-REQ-021]), and shall be able to authenticate itself to each provisioned SpacetimeDB game instance for the purpose of invoking privileged operations on that instance. The privileged operations that require such authentication include, at minimum: initialisation of the game at game start ([04-REQ-013]), registration of Convex as a subscriber to the instance's game-end notification mechanism ([04-REQ-061a]), and retrieval of the complete historical record at game end ([04-REQ-061]). Convex does not hold a live gameplay subscription to any SpacetimeDB game instance; live gameplay reads during play are performed by web clients directly ([02]) and do not require a Convex-held credential. The mechanisms by which Convex obtains and presents these credentials shall use best-practice affordances of the SpacetimeDB hosting platform and are a Phase 2 Design concern.
+
+---
+
 ## REVIEW Items
 
 ### 03-REVIEW-001: "JWT" and "HMAC" as implementation artifacts — **RESOLVED**

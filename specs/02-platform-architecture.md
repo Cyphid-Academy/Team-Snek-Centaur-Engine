@@ -48,13 +48,15 @@
 
 **02-REQ-018**: The system shall enforce that at most one human operator is the current selector of any given snake, and at most one snake is currently selected by any given operator. Enforcement is the responsibility of the runtime that owns selection state (Convex, per [02-REQ-017]).
 
-**02-REQ-019**: Convex shall orchestrate the provisioning of a fresh SpacetimeDB instance at the moment a game is launched, and its teardown after the game ends. (The reducer signatures and provisioning API mechanics are owned by [04] and [05].)
+**02-REQ-019**: Convex shall orchestrate the provisioning of a fresh SpacetimeDB instance at the moment a game is launched, and its teardown after the game ends. (The reducer signatures and provisioning API mechanics are owned by [03], [04], and [05].)
 
 **02-REQ-020**: A SpacetimeDB instance shall not be reused across distinct games. Each launched game shall be served by its own freshly provisioned SpacetimeDB instance. This rule shall apply uniformly to every game-creation path — including the first game in a room, successor games auto-created after a previous game ends, and every round of a tournament — with no special-case exceptions.
 
 **02-REQ-021**: A SpacetimeDB instance's lifetime shall be bounded to the lifetime of its game. After the game ends and replay data has been persisted ([02-REQ-022]), the instance shall be torn down.
 
-**02-REQ-022**: At game end, Convex shall persist the complete game record by reading the game state log directly from the SpacetimeDB instance. This persistence shall complete before SpacetimeDB instance teardown.
+**02-REQ-022**: At game end, Convex shall persist the complete game record by obtaining the complete game state log from the SpacetimeDB instance. Retrieval may follow any pattern permitted by [04-REQ-061] — Convex-pull, runtime-push, or bundling the record into the game-end notification of [04-REQ-061a] — at Design's discretion; 02 requires only that retrieval and persistence complete before SpacetimeDB instance teardown ([02-REQ-021]).
+
+**02-REQ-022a**: Convex shall learn of a game's terminal state via a runtime-pushed notification delivered by the SpacetimeDB instance to Convex ([04-REQ-061a]). Convex shall not hold a live gameplay subscription to any SpacetimeDB instance; live gameplay state is consumed only by clients of the SpacetimeDB instance (Centaur Servers per [02-REQ-023], human operators per [02-REQ-038], spectators per [02-REQ-041]). The specific notification mechanism is owned by [04]; Convex-side handling is owned by [05] per [05-REQ-038].
 
 **02-REQ-050**: Prior to launch, a game's configuration shall exist as a mutable record in Convex and may be edited by permitted users. At launch, the configuration shall be frozen and supplied to the newly provisioned SpacetimeDB instance; after launch, the game's configuration shall not be mutable.
 

@@ -116,6 +116,8 @@
 
 **05-REQ-032**: On game start, Convex shall orchestrate the provisioning of a fresh SpacetimeDB game instance per [02-REQ-003] and [02-REQ-020], the deployment of the shared engine codebase ([02-REQ-035]) into that instance, and the invocation of the instance's privileged initialization reducer (owned by [04]) with all of the following: the game configuration snapshot ([05-REQ-024]), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's admission authorization state per [03-REQ-039], and the instance's unique admission-ticket validation secret ([03-REQ-022]). Successful completion of this sequence shall transition the game's status to `playing`.
 
+**05-REQ-032a**: Convex's interactions with the SpacetimeDB hosting platform and with a provisioned instance during the orchestration of [05-REQ-032] shall be authenticated per [03-REQ-048]. As part of the same orchestration, Convex shall register itself as a subscriber to the provisioned instance's game-end notification mechanism ([04-REQ-061a]) no later than the successful completion of that orchestration. This subscription is the mechanism by which Convex later learns of the game's terminal state per [05-REQ-038].
+
 **05-REQ-033** *(negative)*: Convex shall not provision a SpacetimeDB game instance before a game record has been created for it, and shall not create a game record without intending to provision an instance for it. Unorphaned instance-less game records and game-less instances are both disallowed states.
 
 **05-REQ-034**: Convex shall provision a fresh admission-ticket validation secret per SpacetimeDB instance at initialization time ([03-REQ-022]). This secret shall be retained by Convex for the duration of the game so that Convex can sign admission tickets for the instance under [03-REQ-019] and [03-REQ-021]. Convex shall not retain the secret after the instance has been torn down and the replay has been persisted.
@@ -126,7 +128,7 @@
 
 **05-REQ-037**: After a game's status has transitioned to `finished` and its replay has been persisted per [05-REQ-040], Convex shall orchestrate teardown of the SpacetimeDB game instance per [02-REQ-021]. Teardown shall complete before any SpacetimeDB resources associated with the instance are released by the platform.
 
-**05-REQ-038**: Convex shall observe the SpacetimeDB game instance for the terminal state produced by the win-condition check of [01-REQ-050–052] (owned by [01]; specific event shape owned by [04]). On observation, Convex shall read the game's final scores from the instance and write them to the game record, transitioning the game's status to `finished`.
+**05-REQ-038**: Convex shall learn of a game's terminal state — produced by the win-condition check of [01-REQ-050–052] (owned by [01]; specific event shape owned by [04]) — via a runtime-pushed notification delivered through the mechanism of [04-REQ-061a], to which Convex shall have subscribed at game-start orchestration time per [05-REQ-032a]. On receipt of such a notification, Convex shall obtain the game's final scores — either from the notification payload or from the historical record retrieved per [05-REQ-040], at Design's discretion — and write them to the game record, transitioning the game's status to `finished`.
 
 **05-REQ-039**: After a game's status has transitioned to `finished` in a non-tournament context, Convex shall auto-create the next game in the same room, inheriting the room's current parameter defaults (not the just-finished game's snapshot). The next game shall begin in the `not-started` status and shall be distinct from the just-finished game per [02-REQ-020].
 
@@ -134,13 +136,13 @@
 
 ### 5.7 Replay Persistence
 
-**05-REQ-040**: Before tearing down a SpacetimeDB game instance per [05-REQ-037], Convex shall read the complete append-only game record from the instance — comprising all static tables and all turn-keyed tables sufficient to reconstruct any historical turn of the game per [02-REQ-013] — and shall persist this record as a replay associated with the game record.
+**05-REQ-040**: Before tearing down a SpacetimeDB game instance per [05-REQ-037], Convex shall obtain the complete append-only game record from the instance — comprising all static tables and all turn-keyed tables sufficient to reconstruct any historical turn of the game per [02-REQ-013] — and shall persist this record as a replay associated with the game record. Retrieval may follow any pattern permitted by [04-REQ-061] (Convex-pull via HTTP action, runtime-push to a Convex endpoint, or bundling into the game-end notification of [04-REQ-061a]); in all cases, Convex's access to the instance for retrieval is authenticated per [03-REQ-048].
 
 **05-REQ-041**: The persisted replay shall be sufficient, in combination with the Centaur subsystem action log owned by [06], to reconstruct the complete turn-level history of the game for the platform replay viewer ([09], informal spec §13.2) and the sub-turn team replay viewer ([08], informal spec §13.3).
 
 **05-REQ-042**: While persisting a replay, Convex shall resolve every `stagedBy` attribution in the game record to its Convex-interpretable form per [03-REQ-045]. The persisted replay shall not contain any raw SpacetimeDB connection Identity in a `stagedBy` field.
 
-**05-REQ-043** *(negative)*: Convex shall not begin replay persistence until the game's status has reached the moment at which the SpacetimeDB instance's authoritative game record is final — that is, not before the SpacetimeDB-side terminal state has been observed per [05-REQ-038].
+**05-REQ-043** *(negative)*: Convex shall not begin replay persistence until the game's status has reached the moment at which the SpacetimeDB instance's authoritative game record is final — that is, not before the SpacetimeDB-side terminal state has been signalled per [05-REQ-038].
 
 **05-REQ-044**: A persisted replay shall survive any subsequent teardown of the SpacetimeDB instance. Platform replay viewing and team replay viewing shall never require consulting a SpacetimeDB instance.
 
