@@ -161,7 +161,7 @@ The platform is composed of exactly three runtime kinds, each with a distinct li
 │ (per started game)  │  │ (per team)             │  │                       │
 │                     │  │                        │  │ Static / SSR serving  │
 │ Transient game state│  │ Bot computation        │  │ Game Platform Client  │
-│ Authoritative rules │  │ Serves Operator Client │  │   (SvelteKit app)     │
+│ Authoritative rules │  │ Serves Operator Client │  │ (SvelteKit, Svelte 5) │
 │ Append-only log     │  └───────────┬────────────┘  └───────────┬───────────┘
 └─────────────────────┘        serves│                     serves│
                           ┌──────────▼──────────┐    ┌───────────▼───────────┐
@@ -305,7 +305,7 @@ interface CentaurServerConfig {
 
 No other extension points exist. The library does not expose hooks for overriding authentication, healthcheck, bot scheduling, or the anytime submission pipeline.
 
-**Operator app: forkable reference implementation** (02-REQ-032a). The operator web application is maintained as a separate reference implementation repository, not as part of the library. Teams fork this repository to obtain the full Svelte-based operator UI, example Drives and Preferences, and team Convex schema. Customisation is unbounded — teams have full source ownership over their fork. The stable interface between the library and the operator app is the data-layer API surface (see [08-REQ-076]); correctness is enforced externally by Convex function contracts ([06]) and security enforcement points (02-REQ-033).
+**Operator app: forkable reference implementation** (02-REQ-032a). The operator web application is maintained as a separate reference implementation repository, not as part of the library. The reference implementation is built with Svelte 5 and uses shadcn-svelte as its component library. Teams fork this repository to obtain the full Svelte 5 operator UI, example Drives and Preferences, and team Convex schema. Customisation is unbounded — teams have full source ownership over their fork. The stable interface between the library and the operator app is the data-layer API surface (see [08-REQ-076]); correctness is enforced externally by Convex function contracts ([06]) and security enforcement points (02-REQ-033).
 
 **Security independence** (02-REQ-033). The platform's security invariants are enforced entirely outside the library:
 
@@ -398,7 +398,7 @@ Operator Browser
 
 The SpacetimeDB connection provides low-latency game state and real-time move staging. The Convex connection provides Centaur subsystem state (which is not in SpacetimeDB) and supports the operator coordination features (selection, Drive management, action logging). Both connections authenticate independently: the SpacetimeDB connection uses an HMAC-signed admission ticket ([03]), and the Convex connection uses the operator's Google OAuth session.
 
-**Game Platform Client dual-connection model** (02-REQ-041). The Game Platform Client is a SvelteKit web application served by the Game Platform Server (static assets, with optional SSR for indexable pages such as profiles and leaderboards). The Game Platform Server itself does not maintain a Convex client connection — all reactive Convex subscriptions live in the Game Platform Client (browser). This parallels the Centaur Server / Operator Client split, with one difference: the Centaur Server maintains its own server-side Convex client because bots need reactive access to Centaur subsystem state, whereas the Game Platform Server has no such need.
+**Game Platform Client dual-connection model** (02-REQ-041). The Game Platform Client is a SvelteKit (Svelte 5) web application using shadcn-svelte as its component library, served by the Game Platform Server (static assets, with optional SSR for indexable pages such as profiles and leaderboards). The Game Platform Server itself does not maintain a Convex client connection — all reactive Convex subscriptions live in the Game Platform Client (browser). This parallels the Centaur Server / Operator Client split, with one difference: the Centaur Server maintains its own server-side Convex client because bots need reactive access to Centaur subsystem state, whereas the Game Platform Server has no such need.
 
 The Game Platform Client handles all cross-team and platform-level UI, including live spectating. When spectating a game, the Game Platform Client maintains two simultaneous connections:
 
@@ -423,8 +423,8 @@ Satisfies 02-REQ-043 through 02-REQ-049.
 
 | Server | Client | Technology | Scope |
 |--------|--------|------------|-------|
-| **Game Platform Server** (platform infrastructure, e.g. Vercel/Cloudflare; static + optional SSR) | **Game Platform Client** | SvelteKit ([09]) | Cross-team: home, team identity management, Centaur Server registration, member management, timekeeper assignment, room browsing/creation, room lobby/game config, live spectating, platform replay viewer, player profiles, team profiles, leaderboards |
-| **Centaur Server** (per team) | **Operator Client** | Determined by library reference app ([08]) | Team-internal: heuristic config, bot parameter config, live operator interface, team-perspective replay viewer with sub-turn timeline |
+| **Game Platform Server** (platform infrastructure, e.g. Vercel/Cloudflare; static + optional SSR) | **Game Platform Client** | SvelteKit (Svelte 5) + shadcn-svelte ([09]) | Cross-team: home, team identity management, Centaur Server registration, member management, timekeeper assignment, room browsing/creation, room lobby/game config, live spectating, platform replay viewer, player profiles, team profiles, leaderboards |
+| **Centaur Server** (per team) | **Operator Client** | Svelte 5 + shadcn-svelte (reference implementation) ([08]) | Team-internal: heuristic config, bot parameter config, live operator interface, team-perspective replay viewer with sub-turn timeline |
 
 **Negative boundary constraints**. The following are architectural constraints, not just UI omissions — they reflect the data ownership model:
 
@@ -433,6 +433,8 @@ Satisfies 02-REQ-043 through 02-REQ-049.
 - The Operator Client does not provide room creation, room browsing, leaderboards, or platform-wide profiles (02-REQ-049). It has no concept of "rooms" or "the platform" — it operates within the scope of a single team's games.
 
 **Rationale**. This boundary cleanly separates concerns: the Game Platform Client handles everything visible to all users (public/cross-team), while the Operator Client handles everything that is competitive-sensitive and team-internal. This separation means a team's bot strategy configuration is never exposed through the Game Platform Client's Convex queries, even accidentally. It also allows teams to customize their Operator Client UI (02-REQ-032c) without affecting the platform-wide experience.
+
+**Shared UI stack rationale**. Both web clients use Svelte 5 with shadcn-svelte as the component library. This shared stack provides a common component vocabulary across the Game Platform Client and the Operator Client reference implementation, reduces context-switching for developers who work across both applications, and delivers a consistent look-and-feel where the two applications share similar interaction patterns (e.g. game board rendering, connection status indicators). The Svelte 5 + shadcn-svelte choice for the Operator Client applies to the reference implementation only — teams that fork the operator app (02-REQ-032c) have full source ownership and may replace the UI framework entirely.
 
 ---
 
