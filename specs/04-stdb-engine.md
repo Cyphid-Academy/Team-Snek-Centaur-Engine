@@ -38,7 +38,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ### 4.3 Game Initialisation
 
-**04-REQ-013**: The runtime shall expose a **privileged initialisation operation** that may be called exactly once per instance, before any connection is admitted, by the Convex orchestration path described in [02-REQ-019]. The caller shall be authenticated per [03-REQ-048]. The operation shall accept, at minimum: the game configuration per [01]'s configurable parameters, the participating Centaur Team roster per [03-REQ-039], the admission-ticket validation secret per [03-REQ-022], and the initial chess-timer budget per Centaur Team per [01-REQ-035].
+**04-REQ-013**: The runtime shall expose a **privileged initialisation operation** that may be called exactly once per instance, before any connection is admitted, by the Convex orchestration path described in [02-REQ-019]. The caller shall be authenticated per [03-REQ-048]. The operation shall accept, at minimum: a fully specified initial game state comprising the board layout (cell terrain as a flat array per [01-REQ-008]–[01-REQ-013]), all snake starting states (positions, health, team assignments per [01-REQ-020]–[01-REQ-021]), and all initial item placements (per [01-REQ-017]); the dynamic gameplay parameters (food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, and other runtime-behaviour parameters — but not board generation parameters, which are consumed by Convex and never reach STDB); the participating-team roster per [03-REQ-039]; and the admission-ticket validation secret per [03-REQ-022]. The operation shall not accept a game seed for board generation, nor shall it call `generateBoardAndInitialState()` — board generation is performed by Convex before the STDB instance is provisioned (see [02] §2.14).
 
 **04-REQ-014**: Successful completion of the initialisation operation shall leave the runtime in a state where (a) the static board layout ([01-REQ-008] through [01-REQ-013]) is written, (b) each snake's initial state ([01-REQ-020], [01-REQ-021]) is written as the turn-0 snapshot, (c) initial food placements ([01-REQ-017]) are written as spawn-turn-0 items, (d) each team's initial time budget ([01-REQ-035]) is recorded, (e) the admission-ticket validation secret is available for use by the admission path (Section 4.4), and (f) the participating-team roster and per-team authorised human email addresses (per [03-REQ-023(d)(e)]) are available for use by the admission path.
 
@@ -46,7 +46,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-016** *(negative)*: The runtime shall reject any attempt to invoke the privileged initialisation operation after it has completed once. The runtime shall also reject any move-staging, turn-declaration, or connection-registration operation submitted before the initialisation operation has completed.
 
-**04-REQ-017**: The runtime shall perform board generation (hazard placement, fertile tile selection, territory assignment, parity selection, starting-position placement, and initial food placement) during the initialisation operation in conformance with [01-REQ-010] through [01-REQ-017] and the bounded-retry feasibility rule [01-REQ-061]. If all allowed board-generation attempts fail, the initialisation operation shall fail in a way that prevents any connection from being admitted to the instance, and shall surface the failure cause to the caller in a form that allows Convex to report infeasibility to the room owner per [01-REQ-061].
+**04-REQ-017**: The runtime shall **not** perform board generation. Board generation (`generateBoardAndInitialState()`, [01-REQ-010] through [01-REQ-017], bounded-retry feasibility [01-REQ-061]) is performed by Convex before the STDB instance is provisioned (see [02] §2.14 and [05-REQ-032]). The `initialize_game` reducer receives a pre-computed initial game state (board layout, snake starting states, initial items) and writes it to STDB tables. The reducer shall validate the structural integrity of the received state — correct board dimensions, valid cell types, consistent snake count matching the team roster, valid item positions — and shall reject malformed payloads synchronously as an error return to the caller. This validation is a defensive coding-error check: a structurally invalid payload indicates a bug in Convex's board-generation or serialisation logic, not a user-facing configuration problem. Infeasibility of board generation for a given configuration is surfaced to the room owner by Convex during config mode, before any STDB instance is provisioned.
 
 ---
 
@@ -187,9 +187,9 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ### 4.12 Replay Export
 
-**04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved.
+**04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved. Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves or turn-declaration operations arriving after the commit of turn `T_end` shall be rejected as "game over" — there is no grace window between commit and enforcement.
 
-**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout, the game configuration seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4 in a form that permits `stagedBy` connection identifiers to be resolved to human emails or Centaur Server team references per [03-REQ-045]. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied.
+**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4 in a form that permits `stagedBy` connection identifiers to be resolved to human emails or Centaur Server team references per [03-REQ-045]. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied.
 
 **04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance via a privileged operation authenticated per [03-REQ-048]. The notification mechanism shall use best-practice platform affordances (e.g., SpacetimeDB's webhook subscription mechanism if available, with Convex having registered its interest at game-initialisation time); specifics are a Phase 2 Design concern. The notification need not itself carry the complete historical record; its minimum obligation is to convey that the game has ended and to identify the instance.
 
@@ -209,7 +209,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-067** *(negative)*: The runtime shall not deliver events, snake states, or any other state referring to a turn `T` to subscribed clients until the atomic turn-resolution transaction for turn `T` has fully committed. Clients shall not observe partial turn-resolution state.
 
-**04-REQ-068** *(negative)*: The runtime shall not consult any external system (Convex, Centaur Server, or other) during gameplay. All data required for gameplay — rules, configuration, admission validation secret, participant attribution record — is seeded at initialisation and never refreshed during the game's life.
+**04-REQ-068** *(negative)*: The runtime shall not consult any external system (Convex, Centaur Server, or other) during gameplay. All data required for gameplay — rules, dynamic gameplay parameters, pre-computed initial game state, admission validation secret, participant attribution record — is seeded at initialisation and never refreshed during the game's life.
 
 **04-REQ-069**: The runtime shall be deterministic with respect to its seeded randomness ([01-REQ-059], [01-REQ-060]): given identical initial seeds, configuration, and sequences of staged-move writes with identical timing, the resulting historical record shall be identical. (This enables test reproducibility and deterministic replay verification.)
 
@@ -308,7 +308,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ---
 
-### 04-REVIEW-006: Game-end detection granularity (turn commit vs Phase 10 completion)
+### 04-REVIEW-006: Game-end detection granularity (turn commit vs Phase 10 completion) — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
@@ -319,9 +319,9 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - B: Make this explicit in the requirements — add a clause to 04-REQ-060 stating the commit boundary.
 **Informal spec reference**: §5 Phase 10; §9.4 step 7.
 
-**Update (2026-04-10, after reading [05] Phase 1 draft and subsequent architectural clarification)**: A related question has been settled upstream; this item is not yet fully resolved, but the scope has shifted.
-- **Settled**: [05-REQ-038] commits Convex to learning of the terminal state. Per 04-REQ-061a, detection is a runtime→Convex push via best-practice platform affordances (e.g., a SpacetimeDB webhook Convex subscribed to at game initialisation), not a live-subscription read. Convex does not hold a live STDB subscription during gameplay.
-- **Still open**: Whether the commit-to-game-ended transition needs explicit wording in 04-REQ-060 (original A/B question). Also: does the game-end notification payload carry any state beyond instance identification, or is it a bare signal that Convex follows up on by retrieving the record per 04-REQ-061?
+**Decision**: Option A — game-end rejection begins at the moment the final turn's transaction commits. In-flight operations arriving after commit are rejected as "game over."
+**Rationale**: The commit of the win-detecting turn is a natural and unambiguous boundary. SpacetimeDB's ACID transaction model means Phase 10's win-condition detection and the state update are part of the same atomic commit. Once that commit is visible, the game is over. There is no meaningful grace window to define — any operation arriving after the commit point is operating on a game that has already ended. This is already implied by the draft but has been made explicit in 04-REQ-060 with commit-boundary language.
+**Affected requirements/design elements**: 04-REQ-060 updated with explicit commit-boundary language: "Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves or turn-declaration operations arriving after the commit of turn `T_end` shall be rejected as 'game over' — there is no grace window between commit and enforcement."
 
 ---
 
@@ -343,7 +343,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ---
 
-### 04-REVIEW-008: Initialisation failure surfacing
+### 04-REVIEW-008: Initialisation failure surfacing — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
@@ -354,6 +354,10 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - B: Asynchronous — Convex writes an initialisation request, the runtime processes it, and a readback endpoint exposes success/failure.
 - C: Hybrid — synchronous for quick-to-detect failures (e.g., obviously invalid config), asynchronous for board-generation retries that may take non-trivial time.
 **Informal spec reference**: §9.4 step 4; §10 `initialize_game`.
+
+**Decision**: Option A — synchronous failure return from the STDB init reducer to Convex, with architectural elaboration on scope.
+**Rationale**: Under the updated architecture, board generation has moved entirely to Convex (see [02] §2.14 and updated 04-REQ-017). STDB no longer calls `generateBoardAndInitialState()` and does not perform bounded-retry feasibility logic. The `initialize_game` reducer receives a pre-computed initial game state from Convex and writes it to tables. The only failure mode remaining on the STDB side is structural validation of the received payload (correct dimensions, valid cell types, consistent snake count, etc.). A malformed payload indicates a coding error in Convex's board-generation or serialisation logic, not a user-facing configuration problem. This validation is fast and deterministic, making synchronous failure the natural and only reasonable choice. The primary user-facing failure path — board-generation infeasibility for a given configuration — is handled entirely by the Convex mutation that runs `generateBoardAndInitialState()`, which surfaces structured errors reactively to the web client during config mode, before any STDB instance is provisioned.
+**Affected requirements/design elements**: 04-REQ-017 rewritten: STDB does not generate boards; the init reducer writes received state and validates structural integrity, rejecting malformed payloads synchronously as a coding-error exception. 04-REQ-013 rewritten: accepts a fully specified initial game state plus dynamic gameplay parameters, not a game seed or full `GameConfig`. Cross-reference: [05-REQ-032] updated to reflect Convex generating the board and passing the result to STDB.
 
 ---
 
