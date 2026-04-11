@@ -6,7 +6,7 @@ This document governs how the Team Snek Centaur Platform specification is author
 
 **Source precedence (authoritative order, highest first)**:
 
-1. **Completed formal module content** — requirements, design, and exported interfaces in the nine spec modules once authored. A formal module section, once written and human-approved, supersedes anything in the informal spec that it covers.
+1. **Completed formal module content** — requirements, design, and exported interfaces in the eight spec modules once authored. A formal module section, once written and human-approved, supersedes anything in the informal spec that it covers.
 2. **The informal specification** (`informal-spec/team-snek-centaur-platform-spec-v2.2.md`) — a draft statement of intent and the source of truth for anything not yet covered by formal module content. The formal modules are being extracted from and refined out of this document, and it remains the reference for behaviour and design not yet captured in a module.
 3. **The general engine spec** (`general-centaur-game-engine-spec-v6.md`) — background context only, superseded by both the Team Snek informal spec and the formal modules wherever they differ. The Team Snek spec scopes the system to a single game with snake-specific mechanics, removing the general engine's ObjectType/Component System/ActionType/MutationRequest abstractions.
 
@@ -16,7 +16,7 @@ The informal spec is explicitly a **draft statement of intent**, not an authorit
 
 ## Module Structure
 
-The specification is decomposed into nine modules, each a separate markdown file. Every module contains three sections in fixed order:
+The specification is decomposed into eight modules, each a separate markdown file. Every module contains three sections in fixed order:
 
 ### Section 1: Requirements
 
@@ -67,8 +67,7 @@ The coupling surface other modules consume. Schemas, type signatures, function s
  ↑
 07-bot-framework ← 01, 06
  ↑
-08-centaur-server-app ← 05, 06, 07
-09-platform-ui ← 04, 05
+08-centaur-server-app ← 04, 05, 06, 07
 ```
 
 ### Dependency Table
@@ -82,28 +81,25 @@ The coupling surface other modules consume. Schemas, type signatures, function s
 | 05 | `specs/05-convex-platform.md` | 02, 03 |
 | 06 | `specs/06-centaur-state.md` | 02 |
 | 07 | `specs/07-bot-framework.md` | 01, 06 |
-| 08 | `specs/08-centaur-server-app.md` | 05, 06, 07 |
-| 09 | `specs/09-platform-ui.md` | 04, 05 |
+| 08 | `specs/08-centaur-server-app.md` | 04, 05, 06, 07 |
 
 ### Module Scope Summaries
 
 **01-game-rules**: Domain model and game behavior. Defines the shared type vocabulary (snake state shape, item types, direction enum, cell types, board geometry, effect types) and all game rules: board construction (sizes, wall border, hazards, fertile tiles, starting positions, parity constraint), snake movement and growth, collision detection with invulnerability modifiers, severing, health, starvation, hazard damage, food and potion mechanics, the interaction definition (closed set), effect immutability principle, turn resolution phases 1–11 in full, win conditions, spawning algorithms, chess timer semantics. This module defines game behavior with no reference to storage, networking, or UI. Its exported interfaces include the domain type definitions that all other modules reference. Corresponds to informal spec Sections 4, 5.
 
-**02-platform-architecture**: Three-runtime topology (SpacetimeDB, Convex, Centaur Server). What each runtime is responsible for. Data ownership boundaries. Shared engine codebase: what it exports, who consumes it. Principles: SpacetimeDB is transient per-game; Convex is persistent; selection discipline lives in Convex not SpacetimeDB; last-write-wins for move staging. Centaur Server is a framework teams must use, with extension points limited to Drive/Preference implementations and optional UI customization. The boundary between the Game Platform (Svelte app for cross-team concerns) and the Centaur Server web application (team-internal competitive operation). Corresponds to informal spec Section 2.
+**02-platform-architecture**: Three-runtime topology (SpacetimeDB, Convex, Snek Centaur Server). What each runtime is responsible for. Data ownership boundaries. The Snek Centaur Server lifecycle: static web host outside games, active bot-computation host during games. Multi-tenancy model: a single Snek Centaur Server can host multiple Centaur Teams simultaneously. Centaur Team → server nomination (captain declares trust by nominating a server domain; no acceptance required). Shared engine codebase: what it exports, who consumes it. Principles: SpacetimeDB is transient per-game; Convex is persistent; selection discipline lives in Convex not SpacetimeDB; last-write-wins for move staging. The unified Snek Centaur Server web application covers both platform-level concerns (rooms, lobbies, team management, spectating, leaderboards) and team-internal concerns (bot config, operator interface, replays). Corresponds to informal spec Section 2.
 
-**03-auth-and-identity**: Three identity types (human, Centaur Server, game participant). Google OAuth for humans. Challenge-callback protocol for Centaur Servers. JWT/HMAC infrastructure for admission tickets. Move staging permissions scoped to team membership. How identities map across Convex and SpacetimeDB. Spectator read-only admission tickets. Corresponds to informal spec Section 3.
+**03-auth-and-identity**: Two persistent identity types (human, Centaur Team) plus derived game-participant identities. Google OAuth for humans. Game-start invitation flow: Convex sends per-Centaur-Team game credentials to nominated server domains at game start via HTTP POST, replacing the former challenge-callback protocol. Per-Centaur-Team game credentials scoped to one team + one game. Admin role for platform-wide visibility. Read-access principle: user identity determines Convex read access, not server identity. HMAC infrastructure for SpacetimeDB admission tickets. Bot admission tickets obtained via game credentials. Move staging permissions scoped to team membership. How identities map across Convex and SpacetimeDB. Spectator read-only admission tickets. Corresponds to informal spec Section 3.
 
 **04-stdb-engine**: SpacetimeDB schema (static tables, turn-keyed append-only tables, mutable working tables). Reducer definitions (initialize_game, register, stage_move, declare_turn_over, resolve_turn). RLS rules for snake invisibility. Chess timer implementation within SpacetimeDB. Turn resolution as a single ACID transaction. Subscription query patterns. Client query patterns for current board, history scrubbing, animation. The append-only log structure enabling replay without per-turn posting. Turn event schema (closed enumeration of event types and payloads, including `stagedBy` capture in `snake_moved`). Corresponds to informal spec Sections 10, 14.
 
-**05-convex-platform**: Platform-wide Convex schema (users, rooms, games, centaur_teams, centaur_servers, centaur_team_members, game_teams, replays, api_keys, webhooks). Game lifecycle orchestration (provisioning SpacetimeDB instances, seeding, teardown). HTTP API endpoints (Bearer-token auth via API keys, CRUD for teams/rooms/games, webhook registration). Webhook delivery with game_start/game_end events. Replay data flow (how Convex reads the SpacetimeDB log at game end). Room and game configuration. Game configuration parameter table with types, defaults, and ranges. Tournament mode lifecycle. Corresponds to informal spec Sections 9, 11 (platform-wide tables), 12, 13.1.
+**05-convex-platform**: Platform-wide Convex schema (users, rooms, games, centaur_teams, centaur_team_members, game_teams, replays, api_keys, webhooks). Game lifecycle orchestration (provisioning SpacetimeDB instances, game-start invitation flow to Centaur Team servers, seeding, teardown). HTTP API endpoints (Bearer-token auth via API keys, CRUD for teams/rooms/games, webhook registration). Webhook delivery with game_start/game_end events. Replay data flow (how Convex reads the SpacetimeDB log at game end). Room and game configuration. Game configuration parameter table with types, defaults, and ranges. Tournament mode lifecycle. Corresponds to informal spec Sections 9, 11 (platform-wide tables), 12, 13.1.
 
-**06-centaur-state**: Convex tables for the Centaur subsystem: snake_config, snake_drives, heuristic_config, snake_heuristic_overrides, bot_params, centaur_action_log (unified discriminated union with enumerated action types). Opinionated Convex function contracts enforcing selection invariants (at most one operator per snake, at most one snake per operator). Drive management mutations. The data contract between bot framework, Centaur Server web application, and the action log schema enabling sub-turn replay reconstruction. All Centaur parameter configuration (heuristic defaults, bot parameters) is written by the Centaur Server web application — not by the Game Platform. Corresponds to informal spec Section 11 (centaur-specific tables).
+**06-centaur-state**: Convex tables for the Centaur subsystem: snake_config, snake_drives, heuristic_config, snake_heuristic_overrides, bot_params, centaur_action_log (unified discriminated union with enumerated action types). Opinionated Convex function contracts enforcing selection invariants (at most one operator per snake, at most one snake per operator). Drive management mutations. The data contract between bot framework, Snek Centaur Server web application, and the action log schema enabling sub-turn replay reconstruction. All Centaur parameter configuration (heuristic defaults, bot parameters) is written by the Snek Centaur Server web application. Corresponds to informal spec Section 11 (centaur-specific tables).
 
 **07-bot-framework**: Drive\<T\> and Preference type signatures. Target types (Snake, Cell). Portfolio model (weights, defaults, per-snake overrides). Heuristic configuration initialization from global defaults at game start. Candidate direction enumeration. Game tree cache: structure, three reactive inputs (interest map, commitment state, portfolio weights), active/dormant branch toggling. Dijkstra-on-lattice foreign combination traversal. Scoring with cached normalized outputs and cheap weight rescanning. Anytime submission pipeline (round-robin, 100ms interval, dirty flags). Softmax decision. Compute scheduling (automatic > selected-manual > unselected-manual). Human-selection rerun. The API contract that Drive/Preference authors program against. Corresponds to informal spec Section 6.
 
-**08-centaur-server-app**: The full Centaur Server web application served to team operators. Multi-page application with navigation. Pages: heuristic config (persistent defaults for Drives and Preferences), bot parameters (temperature, operator mode, time allocations), game history (list of completed games), team replay viewer (read-only operator interface with sub-turn timeline scrubbing, data source abstraction for live vs replay, invisible viewer selection). Live operator interface: header layout, board display, snake selection model, move interface, manual mode toggle, Drive management UX (targeting modes, Tab cycling, eligibility filtering), worst-case world preview, decision breakdown table, operator modes (Centaur vs Automatic), timekeeper controls. Corresponds to informal spec Sections 7, 13.3.
-
-**09-platform-ui**: The Game Platform Svelte web application. Home/navigation, team management (identity, server registration, member management — no bot/heuristic configuration), room browser and creation, room lobby (game config, ready check, board preview), live spectating (SpacetimeDB subscription with read-only admission ticket, scoreboard, timeline scrubber), platform replay viewer (turn-level board state, event log, timeline scrubber), player profiles, team profiles, leaderboard. Corresponds to informal spec Sections 8, 13.2.
+**08-centaur-server-app**: The unified Snek Centaur Server web application. Serves all platform concerns and all team-internal concerns from a single web application backed by the same Convex backend. Platform-level pages: home/navigation, Centaur Team management (identity, server nomination, member management), room browser and creation, room lobby (game config, ready check, board preview), live spectating (SpacetimeDB subscription with read-only admission ticket, scoreboard, timeline scrubber), replay viewer (unified turn-level and sub-turn timeline, privacy-gated within-turn access, admin override), player profiles, team profiles, leaderboard. Team-internal pages: heuristic config (persistent defaults for Drives and Preferences), bot parameters (temperature, operator mode, time allocations), game history (list of completed games). Live operator interface: header layout, board display, snake selection model, move interface, manual mode toggle, Drive management UX (targeting modes, Tab cycling, eligibility filtering), worst-case world preview, decision breakdown table, operator modes (Centaur vs Automatic), timekeeper controls. Multi-tenant bot computation: per-Centaur-Team isolation during games, game credential management, invitation acceptance. Corresponds to informal spec Sections 7, 8, 13.
 
 ---
 
@@ -223,7 +219,7 @@ The dependency graph constrains the order. Within those constraints, the recomme
 3. **03-auth-and-identity** — Can proceed once 02 is done.
 4. **04-stdb-engine**, **05-convex-platform**, **06-centaur-state** — These three are independent of each other and can be done in any order (or in parallel across sessions). All require 02; 04 and 05 also require 03.
 5. **07-bot-framework** — Requires 01 and 06.
-6. **08-centaur-server-app**, **09-platform-ui** — Independent of each other. 08 requires 05, 06, and 07. 09 requires 04 and 05.
+6. **08-centaur-server-app** — Requires 04, 05, 06, and 07.
 
 ### Phase 2 (Design + Exported Interfaces) Pass
 
@@ -238,7 +234,7 @@ Recommended Phase 2 order:
 4. **06** (before 04 and 05)
 5. 04, 05 (either order)
 6. 07
-7. 08, 09 (either order)
+7. 08
 
 ---
 
@@ -268,12 +264,11 @@ The replay system spans four modules:
 - **04** defines the SpacetimeDB append-only log schema that constitutes the game state record.
 - **05** defines how Convex reads and stores the log at game end (informal spec Section 13.1), and hosts the `replays` table.
 - **06** defines the `centaur_action_log` schema that provides sub-turn Centaur experience data for team replays.
-- **08** implements the team replay viewer (informal spec Section 13.3), consuming both the game log (via 05's replay query interface) and the action log (via 06's exported interfaces).
-- **09** implements the platform replay viewer (informal spec Section 13.2), consuming only the game log (via 05).
+- **08** implements the unified replay viewer, consuming both the game log (via 05's replay query interface) and the action log (via 06's exported interfaces). The viewer provides turn-level board state and event log for all users, plus sub-turn timeline with within-turn Centaur Team actions gated by game privacy and team membership (admin users see all).
 
-### Game Platform vs Centaur Server Boundary
+### Unified Snek Centaur Server Application Boundary
 
-The Game Platform (module 09) handles cross-team concerns: team identity, room management, game configuration, spectating, platform-level replay viewing, profiles, and leaderboards. The Centaur Server web application (module 08) handles team-internal competitive operation: heuristic configuration, bot parameters, live gameplay, and team replay with sub-turn resolution. Bot parameters, heuristic configuration, and Drive management are exclusively Centaur Server affordances — the Game Platform does not provide UI for these. The team management page on the Game Platform (informal spec Section 8.2) is limited to identity, server registration, and member management.
+The unified Snek Centaur Server web application (module 08) handles both platform-level concerns (rooms, lobbies, team management, spectating, leaderboards, profiles) and team-internal competitive operation (heuristic configuration, bot parameters, live gameplay, team replay with sub-turn resolution). Every Snek Centaur Server is a full-platform frontend to the same Convex backend. There is no separate Game Platform Server runtime. Bot parameters, heuristic configuration, and Drive management are team-internal affordances within the unified application. The Centaur Team management page is limited to identity, server nomination, and member management — no bot or heuristic configuration.
 
 ---
 
@@ -370,8 +365,7 @@ project-root/
     ├── 05-convex-platform.md
     ├── 06-centaur-state.md
     ├── 07-bot-framework.md
-    ├── 08-centaur-server-app.md
-    └── 09-platform-ui.md
+    └── 08-centaur-server-app.md
 ```
 
 ---
@@ -379,7 +373,7 @@ project-root/
 ## Conventions
 
 - **Requirement IDs** are never reused. If a requirement is deleted, its ID is retired.
-- **Module IDs** use the two-digit prefix (01 through 09).
+- **Module IDs** use the two-digit prefix (01 through 08).
 - **TypeScript** is the language for all type signatures and schema definitions in exported interfaces.
 - **Markdown headers** use `##` for the three main sections (Requirements, Design, Exported Interfaces) and `###` for subsections within them.
 - **Tables** are preferred over prose for enumerating configuration parameters, event types, and similar structured data.

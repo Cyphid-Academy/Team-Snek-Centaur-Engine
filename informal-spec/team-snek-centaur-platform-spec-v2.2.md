@@ -1,14 +1,14 @@
-# Team Snek Centaur Platform — Integrated Specification v2.2
+# Snek Centaur Platform — Integrated Specification v2.2
 
 ## 1. Vision
 
-Team Snek is a team-based multiplayer snake game that serves as the first title on the Centaur educational platform. The platform trains players to collaborate with AI by giving each team a Centaur Server — a bot infrastructure that controls all the team's snakes by default, with human operators overriding individual snakes when their judgment adds marginal value.
+Team Snek is a team-based multiplayer snake game that serves as the first title on the Snek Centaur Platform. The platform trains players to collaborate with AI by giving each Centaur Team a bot infrastructure that controls all the team's snakes by default, with human operators overriding individual snakes when their judgment adds marginal value.
 
-The platform comprises three layers:
+The platform comprises three infrastructure layers:
 
 - **Game Engine**: A SpacetimeDB module (TypeScript) running Team Snek game logic. One transient SpacetimeDB instance per active game. Turn resolution is simultaneous and runs as a single ACID transaction. Turn advancement uses a chess-timer system with per-team time budgets.
-- **Platform Services**: A single Convex instance managing user accounts, rooms, game history, replays, game configuration, Centaur Server registration, and per-team Centaur state (snake config, bot parameters, interaction logs).
-- **Centaur Servers**: Per-team servers that subscribe to game state via WebSocket, run bot computation, stage moves, and serve the operator UI to human teammates. Each team's Centaur Server authenticates to SpacetimeDB as a single connection controlling all the team's snakes. Every team must have a registered Centaur Server — there are no pure-human teams.
+- **Platform Services**: A single Convex instance managing user accounts, rooms, game history, replays, game configuration, and per-Centaur-Team state (snake config, bot parameters, interaction logs).
+- **Snek Centaur Servers**: The client-serving and bot-computation tier. A Snek Centaur Server serves the unified web application (covering all platform concerns and team-internal concerns) and, during games, runs bot computation for each Centaur Team it has been invited to host. A single Snek Centaur Server can host multiple Centaur Teams simultaneously. Outside of active games, a Snek Centaur Server is a static web host with no active backend connections. Every Centaur Team must have a nominated Snek Centaur Server — there are no pure-human teams.
 
 ---
 
@@ -16,14 +16,14 @@ The platform comprises three layers:
 
 ### Infrastructure Topology
 
-![Infrastructure Topology](infrastructure-topology.svg)
+The platform comprises two infrastructure runtimes (Convex, SpacetimeDB) plus Snek Centaur Servers as the client-serving and bot-computation tier. There is no separate "Game Platform Server" runtime — the Snek Centaur Server IS the platform frontend.
 
 ### Shared Engine Codebase
 
-The game engine is a single TypeScript codebase shared across the SpacetimeDB module, Centaur Server library, and web client. It exports:
+The game engine is a single TypeScript codebase shared across the SpacetimeDB module, Snek Centaur Server library, and web client. It exports:
 
 - **Game state types**: Snake, Board, Food, Potion, Cell, Direction
-- **Turn resolution logic**: Collision detection, food/potion processing, scoring — used authoritatively by SpacetimeDB, used for simulation by Centaur Server bots
+- **Turn resolution logic**: Collision detection, food/potion processing, scoring — used authoritatively by SpacetimeDB, used for simulation by Snek Centaur Server bots
 - **Move validation**: Used by clients for pre-validation and SpacetimeDB for authoritative validation
 
 ### SpacetimeDB (Game Runtime)
@@ -32,7 +32,7 @@ Each game is a transient SpacetimeDB instance. The TypeScript module is deployed
 
 SpacetimeDB provides automatic real-time synchronization to all connected clients via subscription queries. Team Snek has full board visibility by default, with the exception of **invisible snakes** — snakes under an invisibility buff are filtered from opponent team connections via Row Level Security. All game mechanics apply to invisible snakes normally; invisibility is purely an information asymmetry.
 
-**Move staging**: The `staged_moves` table is keyed by snake ID. Exactly one staged move exists per snake at any time. Writes use last-write-wins semantics. Both human web clients (for direct overrides) and Centaur Servers (for bot-computed moves) write to this table. The turn resolver consumes and clears staged moves atomically when the turn fires.
+**Move staging**: The `staged_moves` table is keyed by snake ID. Exactly one staged move exists per snake at any time. Writes use last-write-wins semantics. Both human web clients (for direct overrides) and Snek Centaur Servers (for bot-computed moves) write to this table. The turn resolver consumes and clears staged moves atomically when the turn fires.
 
 **Replay persistence**: Game state is stored as an append-only log within SpacetimeDB (see Section 10). At game end, Convex reads the complete log to construct the replay. No per-turn posting is required during gameplay.
 
@@ -45,37 +45,44 @@ A single Convex instance manages all persistent state:
 - Rooms (persistent lobbies hosting sequential games)
 - Game history (results, scores, statistics)
 - Replay data (complete game logs imported from SpacetimeDB at game end)
-- Centaur Server registry (domain, team association, health status)
+- Centaur Team records (name, colour, nominated server domain, captain, members)
 - Game configuration (board size, turn time, food rates, potion settings)
-- JWT infrastructure (RSA key pair for Centaur Server auth, JWKS endpoint)
+- Admin user designation
+- Game credential infrastructure for game-start invitations
 
-**Per-team Centaur state:**
+**Per-Centaur-Team state:**
 - Snake config (per-snake: selection state, manual mode, temperature, live stateMap, worst-case worlds, annotations, heuristic outputs)
 - Active Drives per snake (type, target, weight — editable by the snake's current selector)
 - Bot parameters (global temperature, operator mode, time allocations)
 - Interaction logs (`centaur_action_log` — high-resolution time series of all human and bot actions for training replay)
 
-### Centaur Servers (Per-Team)
+### Snek Centaur Servers
 
-Each team operates its own Centaur Server, built on a provided library. The Centaur Server:
+Snek Centaur Servers are the client-serving tier. Any number may exist, each serving the same unified web application backed by the same Convex backend.
 
-- Authenticates to SpacetimeDB via a Convex-issued JWT (obtained through challenge-callback, see Section 3)
-- Holds a WebSocket subscription to SpacetimeDB for live game state
-- Runs bot computation for all team snakes not currently human-selected
-- Stages computed moves in SpacetimeDB's `staged_moves` table
-- Subscribes to Convex for snake config, drive assignments, bot parameters
-- Writes snake config updates (stateMap, worst-case worlds, annotations, heuristic outputs) and action log entries to Convex
-- Serves the operator UI (web application) to human teammates, including team-perspective replay mode for completed games
+**Outside games (static host mode):** A Snek Centaur Server is a static web host. It serves the web application to users. It has NO Convex credentials, NO SpacetimeDB connections, NO active subscriptions of its own. All data displayed to users comes from the user's own direct Convex client connection, authenticated by the user's Google identity.
 
-**Centaur Server Library**: Provides the bot framework (Drives, Preferences, anytime evaluation, softmax decision), the challenge-callback auth handler, a `/healthcheck` endpoint, Convex schema bindings, and a reference operator UI. The platform calls `/healthcheck` when a Centaur Server is added to a game; a ping button in the room config UI allows manual wake-up checks. Teams plug in custom Drives and Preferences and may modify the operator UI. The Convex interaction layer is opinionated — it enforces invariants such as at most one selector per snake and at most one snake per selector, and exposes Drive management only to the current selector of a snake.
+**During games (game-time mode):** The Snek Centaur Server additionally runs bot computation for each Centaur Team it has been invited to host. It uses per-Centaur-Team game credentials (pushed to it by Convex at game start via the game invitation flow, see Section 3) to write to Convex (centaur subsystem state updates, action log entries) and connect to SpacetimeDB (move staging) on behalf of each hosted Centaur Team. A server hosting multiple Centaur Teams maintains separate connections and isolated bot computation contexts per team.
+
+**After a game ends:** The game credentials expire. The server returns to being a static web host.
+
+**Multi-tenancy:** A single Snek Centaur Server can host multiple Centaur Teams simultaneously. Two teams hosted on the same server MAY play in the same game. Trust implication: the server operator has full access to both teams' bot strategies and state during the game. The reference implementation enforces application-level tenant isolation — each team's bot compute runs in an isolated context.
+
+**Centaur Team → Server relationship:** A captain nominates a Snek Centaur Server domain in the Centaur Team configuration on the platform UI. No acceptance from the server is required — the captain unilaterally declares trust. A Centaur Team can change its nominated server domain at any time (except during games with `status = "playing"`). The relationship is many-to-many over time but one-to-one per team per game.
+
+**Snek Centaur Server Library**: Provides the bot framework (Drives, Preferences, anytime evaluation, softmax decision), the game invitation handler, a `/healthcheck` endpoint, multi-tenant runtime, Convex schema bindings, and a reference web application. The platform calls `/healthcheck` to show server health in the lobby; a ping button allows manual wake-up checks. Teams plug in custom Drives and Preferences and may modify the web application. The Convex interaction layer is opinionated — it enforces invariants such as at most one selector per snake and at most one snake per selector, and exposes Drive management only to the current selector of a snake.
+
+**Reference deployment:** The reference Snek Centaur Server (e.g., snek-centaur.cyphid.org) is the socially canonical entry point operated by Cyphid, but it has no special technical privileges. It uses the same Convex APIs as any other Snek Centaur Server. The platform code is open source; other communities may run their own Convex deployments with their own canonical Snek Centaur Servers.
 
 ### Web Clients
 
-Human operators connect to their team's Centaur Server web application. The client connects to:
+Human operators connect to their Centaur Team's nominated Snek Centaur Server web application. The client connects to:
 
 1. **SpacetimeDB** (direct WebSocket, low latency): Subscribes to game state. Stages direct moves for human-controlled snakes. Authenticates via Convex-issued admission ticket (see Section 3).
 
 2. **Convex** (standard Convex client): Reads snake config (selection, stateMap, worst-case worlds, annotations, heuristic outputs), drive assignments. Writes Drive assignments, weight overrides, selection changes, move staging. All player actions are logged to `centaur_action_log`.
+
+A user's read access to Convex data is determined entirely by their Google identity, with no conditioning on which Snek Centaur Server they are visiting. Any server serves the same platform UI and the user sees the same data regardless.
 
 ---
 
@@ -83,47 +90,59 @@ Human operators connect to their team's Centaur Server web application. The clie
 
 ### Identity Model
 
-Three identity types in the system:
+Two persistent identity types plus one derived game-participant type:
 
 1. **Human users**: Google OAuth accounts, authenticated via Convex Auth. Identified by email address.
-2. **Centaur Servers**: Identified by registered domain. Authenticated via challenge-callback protocol.
-3. **SpacetimeDB game participants**: Both humans and Centaur Servers receive Convex-issued JWTs (admission tickets) that SpacetimeDB validates against a shared HMAC secret.
+2. **Centaur Teams**: Platform-assigned ID, the persistent competitive unit. A Centaur Team has a nominated Snek Centaur Server domain as a configuration field, but "Centaur Server identity" is not a platform identity type — servers have no persistent identity on the platform.
+3. **SpacetimeDB game participants**: Humans and bot participants (acting on behalf of Centaur Teams) receive Convex-issued admission tickets that SpacetimeDB validates against a shared HMAC secret.
 
-### Centaur Server Authentication (Challenge-Callback)
+**Admin role**: Admin is a platform-level (Convex-side) role. Admin users can browse ALL Centaur Teams, see ALL games in history pages, and watch ANY replay including within-turn actions of any Centaur Team regardless of game privacy settings. How admin accounts are designated (e.g., a list of Google emails in Convex config) is a design concern.
 
-No shared secrets are stored or exchanged at registration time. A Captain registers their Centaur Server by entering its domain URL on the platform.
+### Game-Start Invitation Flow
 
-**Auth flow (initiated by Centaur Server, repeated on JWT expiry):**
+The challenge-callback protocol is eliminated. In its place:
 
-1. Centaur Server calls unauthenticated Convex HTTP action: `POST /api/centaur-auth` with `{domain: "team-foo.example.com"}`
-2. Convex looks up the registered Centaur Server for that domain, generates a cryptographic nonce
-3. Convex POSTs the nonce to `https://team-foo.example.com/.well-known/centaur-challenge`
-4. The Centaur Server at that domain echoes the nonce back in the HTTP response
-5. Convex signs a JWT (`sub: "centaur:{teamId}"`, short expiry) using the platform's RSA private key, returns it to the caller
-6. Centaur Server uses this JWT with the standard Convex client
+1. When a game transitions from `not-started` to `playing`, Convex initiates the game-start sequence.
+2. After freezing config and provisioning the SpacetimeDB instance, Convex sends a **game invitation** to each participating Centaur Team's nominated server domain.
+3. The invitation is delivered via HTTP POST to a well-known endpoint (e.g., `POST /.well-known/snek-game-invite`).
+4. DNS is treated as sufficient proof of domain ownership for inbound delivery — Convex is sending TO the domain, not receiving credentials FROM it.
+5. The invitation payload contains a per-Centaur-Team game credential sufficient for the server to: (a) write to Convex on behalf of that Centaur Team, and (b) obtain SpacetimeDB admission tickets for that team's bot participant connection.
+6. The server must **accept** the invitation for the game to proceed. The reference implementation auto-accepts by default.
+7. Custom servers can **reject** invitations. The reference implementation includes a server-side config file allowing whitelisting by player email or Centaur Team ID (default: accept all).
+8. If any server rejects or fails to respond, the game start fails (returns to `not-started` with an error).
 
-The Centaur Server library provides the `/.well-known/centaur-challenge` endpoint handler and an automatic token refresh loop.
+The Snek Centaur Server library provides the `/.well-known/snek-game-invite` endpoint handler and credential management.
 
-**Convex JWT infrastructure**: An RSA key pair is stored in Convex environment variables. A Convex HTTP action at `/api/jwks` serves the public key in JWKS format. The `auth.config.ts` configures a `customJwt` provider pointing at this JWKS endpoint. The `sub` claim prefix (`centaur:` vs Google OAuth subjects) distinguishes Centaur Server identities from human identities in `ctx.auth.getUserIdentity()`.
+### Per-Centaur-Team Game Credential
+
+- Scoped to one Centaur Team + one game.
+- Lifetime bounded to the game — expires when the game ends or shortly after.
+- Grants write access to Convex for that Centaur Team's centaur subsystem state only.
+- Grants the ability to request SpacetimeDB admission tickets for that Centaur Team's bot participant role.
+- NOT transferable: a credential for Centaur Team A does not grant access to Centaur Team B's state.
 
 ### Human Authentication
 
-Human users authenticate with Google OAuth via Convex Auth on the platform. This establishes a persistent Convex session (token in browser localStorage).
+Human users authenticate with Google OAuth via Convex Auth on the Snek Centaur Server web application. This establishes a persistent Convex session (token in browser localStorage).
+
+### Read-Access Principle
+
+A user's read access to Convex data is determined entirely by their Google identity, with no conditioning on which Snek Centaur Server they are visiting. Any server serves the same platform UI and the user sees the same data. Trust implication: a malicious server could inject client-side code to exfiltrate Convex-readable data — users should only log into servers they trust.
 
 ### SpacetimeDB Admission Tickets
 
 When a game starts, Convex seeds the SpacetimeDB instance with:
 - Game configuration
-- Team membership (mapping team IDs to authorized email addresses and Centaur Server team IDs)
+- Team membership (mapping team IDs to authorized email addresses and Centaur Team IDs)
 - An HMAC secret for ticket validation
 
 Participants obtain admission tickets from Convex:
-- **Humans**: Call a Convex mutation `getAdmissionTicket(gameId)` — Convex validates their session, checks team membership, returns an HMAC-signed JWT containing `{email, teamId, gameId, role: "human", exp}`
-- **Centaur Servers**: Call the same endpoint, authenticated as their Centaur identity — returns a ticket with `{teamId, gameId, role: "centaur", exp}`
+- **Humans**: Call a Convex mutation `getAdmissionTicket(gameId)` — Convex validates their session, checks team membership, returns an HMAC-signed ticket containing `{email, teamId, gameId, role: "human", exp}`
+- **Bot participants**: The Snek Centaur Server calls the same endpoint, authenticated with its per-Centaur-Team game credential — returns a ticket with `{teamId, gameId, role: "bot", exp}`. A server hosting 3 Centaur Teams maintains 3 separate SpacetimeDB WebSocket connections, each authenticated with that team's admission ticket.
 
 The client sends the admission ticket over the SpacetimeDB WebSocket via a `register` reducer. The SpacetimeDB module validates the HMAC signature and associates that connection's Identity with the appropriate team and permission level.
 
-**Move staging permissions**: Both human connections and the Centaur Server connection for a team can stage moves for any snake belonging to that team. Last-write-wins. Selection discipline is enforced by the Centaur Server library's opinionated Convex API, not by SpacetimeDB.
+**Move staging permissions**: Both human connections and bot participant connections for a team can stage moves for any snake belonging to that team. Last-write-wins. Selection discipline is enforced by the Snek Centaur Server library's opinionated Convex API, not by SpacetimeDB.
 
 ---
 
@@ -480,13 +499,13 @@ If the snake already has a human-staged move, that move remains staged. Updated 
 
 ---
 
-## 7. Centaur Server Web Application
+## 7. Snek Centaur Server Web Application
 
-The Centaur Server serves a multi-page web application to its team's human operators. This is the team's primary interface for configuring AI behavior, playing live games, and reviewing past games. The Game Platform (Section 8) handles team identity, room management, and cross-team concerns; the Centaur Server web application handles everything internal to a team's competitive operation.
+The Snek Centaur Server serves a unified multi-page web application covering both platform-level concerns and team-internal competitive operation. This is the single web application for all platform interactions — there is no separate Game Platform Server or Game Platform Client. Every Snek Centaur Server serves the same application, backed by the same Convex backend.
 
-All pages authenticate via Google OAuth (the same identity used on the Game Platform). Navigation provides access to: live game (when one is active), game history (completed games available for team replay), heuristic configuration, bot parameters, and a link back to the Game Platform.
+All pages authenticate via Google OAuth. Navigation provides access to: home, rooms (browse/create), teams (browse/create/manage), live game (when one is active), game history, heuristic configuration, bot parameters, live spectating, replay viewer, player profiles, team profiles, leaderboard, and more.
 
-The Centaur Server library provides a reference implementation of the full web application; teams may customise the UI.
+The Snek Centaur Server library provides a reference implementation of the full web application; teams may customise the UI.
 
 ### 7.1 Heuristic Config
 
@@ -508,9 +527,9 @@ A persistent configuration page for team-wide bot settings. Editable by any team
 
 These are stored in Convex per team and read by the Centaur Server at game start.
 
-### 7.3 Game History and Team Replay
+### 7.3 Game History
 
-Lists completed games the logged-in user participated in, showing room name, date, opponent teams, result, and scores. Selecting a game opens the team-perspective replay viewer (see Section 13.3), which reuses the live operator interface components in read-only mode with sub-turn timeline scrubbing.
+Lists completed games the logged-in user participated in, showing room name, date, opponent teams, result, and scores. Selecting a game opens the unified replay viewer (see Section 7.12 and Section 13), which provides both turn-level board state and within-turn Centaur experience timeline (subject to privacy gating).
 
 ### 7.4 Live Operator Interface — Design Principles
 
@@ -578,33 +597,27 @@ The operator who currently has a snake selected can add, remove, and configure D
 
 In both modes, the Drive is added to the snake's portfolio with its default weight. Pressing Tab cycles through eligible targets in order of A* distance from the snake's head (nearest first). Pressing Escape cancels targeting without adding the Drive. Active Drives are listed in the snake's control panel with their current weight (editable) and a remove button. Weight adjustments and Drive removal take effect immediately, triggering re-evaluation of the affected snake. Drive assignments and weight overrides persist across turns (they are not reset when the operator deselects the snake).
 
----
+### 7.7 Home and Navigation
 
-## 8. Game Platform Interface
+The home page shows the authenticated user's Centaur Team memberships, rooms they've recently visited, and any games currently in progress. A global navigation bar provides access to: Rooms (browse/create), Teams (browse/create/manage), Profile (own player page), and Leaderboard.
 
-The Game Platform comprises a **Game Platform Server** (deployed on platform infrastructure such as Vercel or Cloudflare; serves static assets and optionally SSR for indexable pages like profiles and leaderboards) and the **Game Platform Client** (a SvelteKit web application running in the browser). This mirrors the Centaur Server / Operator Client split described in Section 7. The Game Platform Server does not maintain its own Convex client connection — all reactive Convex subscriptions live in the Game Platform Client. (This differs from the Centaur Server, which maintains a server-side Convex client because bots need reactive access to Centaur subsystem state.) The Game Platform Client is backed by Convex and is the primary interface for all activity outside of live gameplay — team management, room administration, game configuration, spectating, replay viewing, and player/team history. All users authenticate via Google OAuth.
-
-### 8.1 Home and Navigation
-
-The platform home page shows the authenticated user's Centaur Team memberships, rooms they've recently visited, and any games currently in progress. A global navigation bar provides access to: Rooms (browse/create), Teams (browse/create/manage), Profile (own player page), and Leaderboard.
-
-### 8.2 Team Management
+### 7.8 Centaur Team Management
 
 Any authenticated user can create a Centaur Team, becoming its Captain. The team management page (accessible to the Captain) provides:
 
 - **Team identity**: Set team name and display colour.
-- **Centaur Server registration**: Enter the server domain. The platform pings `/healthcheck` to verify reachability. Health status is displayed with last-checked timestamp.
+- **Server nomination**: Enter the Snek Centaur Server domain. The platform pings `/healthcheck` to verify reachability. Health status is displayed with last-checked timestamp. No acceptance from the server is required.
 - **Member management**: Add members by email (must have Google OAuth accounts on the platform). Remove members. Assign the timekeeper role to one member.
 
-Any team member can view the team page. Only the Captain can modify team identity, server registration, and membership.
+Any team member can view the team page. Only the Captain can modify team identity, server nomination, and membership.
 
-Bot parameters, heuristic configuration, and Drive management are Centaur Server affordances — they are configured through the the Centaur Server web application (Section 7) served by the team's Centaur Server, not through the Game Platform.
+Bot parameters, heuristic configuration, and Drive management are team-internal affordances — they are configured through the team-internal pages of the web application, not through the team management page.
 
-### 8.3 Room Browser and Creation
+### 7.9 Room Browser and Creation
 
 The room browser lists all rooms with name, owner, number of teams currently joined, and whether a game is in progress. Users can filter and search by name. Creating a room requires only a name; the creator becomes the room owner.
 
-### 8.4 Room Lobby
+### 7.10 Room Lobby
 
 The room lobby is the central hub for game setup. It displays current game configuration, joined teams, and ready status.
 
@@ -618,13 +631,13 @@ The room lobby is the central hub for game setup. It displays current game confi
 **Centaur Team participants:**
 - View current configuration (read-only if owner exists and they are not the owner)
 - Mark team ready / unmark ready (Captain or any team operator)
-- Ping their Centaur Server's healthcheck from within the lobby
+- Ping their nominated Snek Centaur Server's healthcheck from within the lobby
 
 **Board preview**: A miniature rendering of the board showing approximate layout of fertile tiles, hazards, and snake starting territories given current settings. Regenerates on config changes (debounced). Can be locked in to use that exact layout for the game.
 
-### 8.5 Live Spectating
+### 7.11 Live Spectating
 
-Any authenticated user can spectate a game in progress from the platform (without joining a Centaur Team). The spectator view provides:
+Any authenticated user can spectate a game in progress (without joining a Centaur Team). The spectator view provides:
 
 - Full board display with all snakes, items, hazards, and fertile tiles
 - Real-time game state updates via SpacetimeDB subscription (spectators connect with a read-only admission ticket)
@@ -635,19 +648,22 @@ Any authenticated user can spectate a game in progress from the platform (withou
 
 Spectators cannot stage moves, select snakes, or modify any game state.
 
-### 8.6 Replay Viewer
+### 7.12 Unified Replay Viewer
 
-Completed games are viewable as replays from the platform. The replay viewer provides:
+Completed games are viewable as replays through a unified viewer interface (not separate platform and team replay viewers). The replay viewer provides:
 
 - Full board rendering identical to the spectator view
 - Timeline scrubber with play/pause and speed controls (0.5×, 1×, 2×, 4×)
 - Turn-by-turn event log showing deaths, food eaten, potions collected, severing events
 - Per-turn scoreboard
 - Direct link sharing for specific games
+- **Within-turn action timeline**: By default, the viewer provides access to every Centaur Team's within-turn actions (action log entries, stateMap snapshots, etc.).
+- **Privacy gating**: If a game is marked as private, viewers only see within-turn events of Centaur Teams they belonged to during that game.
+- **Admin override**: Admin users can see all within-turn events regardless of privacy.
 
 Replays are reconstructed from the append-only game log stored in Convex. No engine instance is required.
 
-### 8.7 Player Profile
+### 7.13 Player Profile
 
 Each authenticated user has a profile page showing:
 
@@ -656,17 +672,17 @@ Each authenticated user has a profile page showing:
 - Game history: a chronological list of games played, showing room name, date, team, opponent teams, result (win/loss/draw), and final scores
 - Aggregate statistics: games played, win rate, average team score
 
-### 8.8 Team Profile
+### 7.14 Team Profile
 
 Each Centaur Team has a public profile page showing:
 
 - Team name, colour, Captain
 - Current members and their roles
-- Centaur Server domain and health status
+- Nominated Snek Centaur Server domain and health status
 - Game history: chronological list of games, showing room, date, opponents, result, and scores
 - Aggregate statistics: games played, win rate, average score, head-to-head records against other teams
 
-### 8.9 Leaderboard
+### 7.15 Leaderboard
 
 A global leaderboard ranks Centaur Teams by configurable criteria:
 
@@ -686,16 +702,18 @@ A Room is a persistent named lobby hosted on Convex. It hosts sequential games. 
 
 ### 9.2 Centaur Teams
 
-A **Centaur Team** is the unit of competition. Each team has a name, display colour, and a registered Centaur Server (identified by domain). At least two Centaur Teams must join a room for a game to start.
+A **Centaur Team** is the unit of competition. Each team has a name, display colour, and a nominated Snek Centaur Server domain. At least two Centaur Teams must join a room for a game to start.
+
+**Server nomination**: A captain nominates a Snek Centaur Server domain in the Centaur Team configuration. No acceptance from the server is required — the captain unilaterally declares trust. A Centaur Team can change its nominated server domain at any time, subject to the mid-game freeze on team parameters (no changes while `status = "playing"`). The relationship is many-to-many over time: teams can switch servers between games, and multiple teams can nominate the same server. During any given game, each team plays from exactly one nominated server.
 
 **Joining a game**: A pre-configured Centaur Team joins or is invited to a game room. This fully specifies the team — there is no separate step for assigning individual players. The number of snakes the team fields is part of the game configuration (e.g. 3 snakes per team).
 
-**Centaur Team management on the Game Platform** (separate from game setup): The Captain manages the team's platform-level configuration:
-- Register/update the Centaur Server domain
+**Centaur Team management** (separate from game setup): The Captain manages the team's platform-level configuration:
+- Nominate/update the Snek Centaur Server domain
 - Add/remove human members (Google OAuth accounts) who can connect as operators
 - Assign the timekeeper role to a team member
 
-Bot parameters, heuristic configuration, and Drive management are configured through the the Centaur Server web application (Section 7), not through the Game Platform.
+Bot parameters, heuristic configuration, and Drive management are configured through the team-internal pages of the Snek Centaur Server web application (Section 7), not through the team management page.
 
 Human team members authenticate via Google OAuth on the platform. Their membership in a Centaur Team is a persistent platform-level association, not per-game configuration.
 
@@ -750,7 +768,7 @@ The schema is organized as an immutable append-only log. Game state is a functio
 
 **board**: `cellX`, `cellY`, `cellType` (normal | wall | hazard | fertile)
 
-**team_permissions**: `teamId`, `identity` (SpacetimeDB Identity), `role` (centaur | human), `email` (nullable, for humans)
+**team_permissions**: `teamId`, `identity` (SpacetimeDB Identity), `role` (bot | human), `email` (nullable, for humans)
 
 ### Turn-Keyed Append-Only Tables (new rows per turn, never mutated or deleted)
 
@@ -803,11 +821,11 @@ At game end, Convex reads all tables from SpacetimeDB in one batch. The complete
 
 **games**: id, roomId, status (not-started | playing | finished), config (nested object matching the game configuration parameter set), spacetimeDbUrl, hmacSecret, scores (nullable — `{teamId: number}` map, populated at game end), startedAt (nullable), finishedAt (nullable)
 
-**centaur_teams**: id, name, colour, centaurServerId, captainUserId
+**centaur_teams**: id, name, colour, nominatedServerDomain, captainUserId
 
 **centaur_team_members**: userId, centaurTeamId, role (captain | timekeeper | operator)
 
-**centaur_servers**: id, domain, centaurTeamId, healthStatus, lastChallengeAt
+**admin_users**: userId (references `users`). Platform-level admin designation. Admins can browse all Centaur Teams, see all game history, and view all replay within-turn actions regardless of privacy.
 
 **game_teams**: gameId, centaurTeamId, players (array of `{userId, email, role}` — snapshot copied from `centaur_team_members` at game start for historical stat tracking)
 
@@ -825,7 +843,7 @@ At game end, Convex reads all tables from SpacetimeDB in one batch. The complete
 
 **snake_config**: gameId, snakeId, operatorUserId (nullable — null = unselected), manualMode (boolean), temperatureOverride (nullable), stateMap (serialized — per-direction worst-case scores), worstCaseWorlds (serialized — per-direction worst-case board state including snake positions), annotations (serialized — per-direction computed annotations such as Voronoi territory boundaries), heuristicOutputs (serialized — per-direction normalized heuristic outputs with current weights). Enforced unique per game: one snake per operator, one operator per snake.
 
-**centaur_action_log**: gameId, turn, identity (userId or centaurServerId), identityType (human | centaur), timestamp, action (discriminated union keyed by `type`). The `action` field uses `v.union()` with `v.literal()` discriminants to enforce per-action-type schema validation. Action types include:
+**centaur_action_log**: gameId, turn, identity (userId or centaurTeamId), identityType (human | bot), timestamp, action (discriminated union keyed by `type`). The `action` field uses `v.union()` with `v.literal()` discriminants to enforce per-action-type schema validation. Action types include:
 
 - `move_staged`: `{snakeId, direction}`
 - `snake_selected`: `{snakeId}`
@@ -914,17 +932,22 @@ Webhook delivery uses at-least-once semantics with exponential backoff retries.
 
 At game end, Convex reads the complete append-only log from SpacetimeDB in one batch: all turn-keyed tables (`turns`, `snake_states`, `item_lifetimes`, `time_budget_states`, `turn_events`) plus static tables (`game_config`, `board`). Combined with the Convex-side `centaur_action_log`, this constitutes the complete replay — game state at turn boundaries from SpacetimeDB, and sub-turn Centaur experience at clock-time resolution from Convex.
 
-### 13.2 Platform Replay Viewer
+### 13.2 Unified Replay Viewer
 
-The platform replay viewer (Section 8.6) provides a turn-level view: board state, scoreboard, event log, timeline scrubber at turn granularity. This is the public spectator perspective, available to any authenticated user.
+There is a single unified replay viewer (see Section 7.12), not separate "platform replay" and "team replay" viewers. The unified viewer provides both turn-level board state and within-turn Centaur experience in a single interface.
 
-### 13.3 Centaur Team Replay
+**Turn-level view**: Full board rendering, scoreboard, turn-by-turn event log, timeline scrubber with play/pause and speed controls (0.5×, 1×, 2×, 4×), per-turn scoreboard, and direct link sharing. Available to any authenticated user.
 
-The Centaur Server web application provides a team-perspective replay mode, accessible via the game history page (Section 7.3), that reuses the same UI components as the live operator interface (Section 7.5), rendered with read-only arguments so that all mutating affordances (move staging, Drive management, manual mode toggling, turn submission) are disabled while all state exploration affordances (snake selection, direction preview, worst-case world preview, heuristic breakdown table) remain fully functional.
+**Within-turn Centaur experience**: The viewer reuses the same UI components as the live operator interface (Section 7.5), rendered with read-only arguments so that all mutating affordances (move staging, Drive management, manual mode toggling, turn submission) are disabled while all state exploration affordances (snake selection, direction preview, worst-case world preview, heuristic breakdown table) remain fully functional.
 
-**Data source abstraction**: During live play, the Centaur UI reads board state from SpacetimeDB and Centaur state (snake config, drives, heuristic overrides) from Convex. During replay, all data comes from Convex — board state from the imported game log, Centaur state from the `centaur_action_log`. The Centaur Server library provides a data source abstraction that unifies these two modes, allowing the same UI components to render without awareness of whether they are live or replaying.
+**Privacy gating for within-turn actions**:
+- **Default**: The viewer provides access to every Centaur Team's within-turn actions (action log entries, stateMap snapshots, etc.).
+- **Private games**: If a game is marked as private, viewers only see within-turn events of Centaur Teams they belonged to during that game.
+- **Admin override**: Admin users (see Section 3) can see all within-turn events regardless of privacy settings.
 
-**Timeline control**: A replay control bar below the main Centaur interface provides a timeline scrubber, play/pause, and speed controls. The scrubber operates at **sub-turn temporal resolution** — within each turn, the viewer can scrub through the team's experience in clock time, observing:
+**Data source abstraction**: During live play, the UI reads board state from SpacetimeDB and Centaur state (snake config, drives, heuristic overrides) from Convex. During replay, all data comes from Convex — board state from the imported game log, Centaur state from the `centaur_action_log`. The Snek Centaur Server library provides a data source abstraction that unifies these two modes, allowing the same UI components to render without awareness of whether they are live or replaying.
+
+**Timeline control**: A replay control bar provides a timeline scrubber, play/pause, and speed controls. The scrubber operates at **sub-turn temporal resolution** — within each turn, the viewer can scrub through a team's experience in clock time, observing:
 
 - Snake selections and deselections (rendered with the selecting operator's coloured shadow, exactly as in live play)
 - stateMap progression as bot computation advanced during the turn
@@ -936,9 +959,9 @@ The Centaur Server web application provides a team-perspective replay mode, acce
 
 These are reconstructed from the `centaur_action_log`, which provides timestamped snapshots at each state-changing event. Entries with action type `statemap_updated` capture full state snapshots (stateMap, worst-case worlds, annotations, heuristic outputs with weights) so that any point in time can be reconstructed by loading the most recent snapshot prior to the scrubber position.
 
-**Replay viewer selection**: The replay viewer acts as an invisible additional observer. Selecting a snake in replay mode shows that snake's stateMap, worst-case worlds, annotations, and heuristic breakdown at the scrubbed timestamp — but does not produce a coloured shadow on the board. Historical operator shadows from the action log are displayed instead. The viewer can inspect any snake on the team, regardless of which operator (if any) had it selected at that moment.
+**Replay viewer selection**: The replay viewer acts as an invisible additional observer. Selecting a snake in replay mode shows that snake's stateMap, worst-case worlds, annotations, and heuristic breakdown at the scrubbed timestamp — but does not produce a coloured shadow on the board. Historical operator shadows from the action log are displayed instead. The viewer can inspect any snake on any team (subject to privacy gating), regardless of which operator (if any) had it selected at that moment.
 
-**Use case**: Centaur team replays enable coaches and players to study the full decision-making process of their team — what information was available, what choices were made and by whom, what the bot recommended at each moment, and how human interventions affected outcomes. This data is also suitable for training AI models on human-AI collaboration patterns.
+**Use case**: Replays enable coaches and players to study the full decision-making process — what information was available, what choices were made and by whom, what the bot recommended at each moment, and how human interventions affected outcomes. This data is also suitable for training AI models on human-AI collaboration patterns.
 
 ---
 
