@@ -189,7 +189,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved. Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves or turn-declaration operations arriving after the commit of turn `T_end` shall be rejected as "game over" — there is no grace window between commit and enforcement.
 
-**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4. Because `stagedBy` fields already carry `Agent` values (resolved at registration time per 04-REQ-020), no Identity→email/team-reference resolution step is required during replay export; the exported record already contains Convex-interpretable `Agent` values throughout. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied. (See also [03-REQ-045].)
+**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the per-game seed ([01-REQ-059], [01-REQ-060]) so that downstream systems can verify deterministic reproducibility per 04-REQ-069 (see 04-REVIEW-013; [01-REQ-059]'s "game client" exclusion does not apply to the privileged Convex replay-export caller authenticated per [03-REQ-048]), the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4. Because `stagedBy` fields already carry `Agent` values (resolved at registration time per 04-REQ-020), no Identity→email/team-reference resolution step is required during replay export; the exported record already contains Convex-interpretable `Agent` values throughout. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied. (See also [03-REQ-045].)
 
 **04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance via a privileged operation authenticated per [03-REQ-048]. The notification mechanism shall use best-practice platform affordances (e.g., SpacetimeDB's webhook subscription mechanism if available, with Convex having registered its interest at game-initialisation time); specifics are a Phase 2 Design concern. The notification need not itself carry the complete historical record; its minimum obligation is to convey that the game has ended and to identify the instance.
 
@@ -411,7 +411,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ---
 
-### 04-REVIEW-012: Visibility of turn-0 initial food placements to opposing teams
+### 04-REVIEW-012: Visibility of turn-0 initial food placements to opposing teams — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
@@ -422,9 +422,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - B: Starting positions are private until each team's snakes become visible through their own actions — would require additional filtering.
 **Informal spec reference**: §4.4, §4.5; no explicit statement.
 
+**Decision**: Option A — starting positions and initial food are fully public from turn 0; no additional filtering needed.
+**Rationale**: Snakes are always visible on turn 0, so there is no pre-game-start window during which enemy positions are hidden. Initial food placement is random among eligible cells, so observing those placements reveals negligible positional information about enemy snakes. The game design treats starting state as public; there is no stated expectation of positional privacy at turn 0.
+**Affected requirements/design elements**: None — 04-REQ-047's visibility-filtering scope stands as drafted (snake state only, not item state).
+
 ---
 
-### 04-REVIEW-013: Game-seed accessibility and deterministic-replay testability
+### 04-REVIEW-013: Game-seed accessibility and deterministic-replay testability — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
@@ -436,9 +440,13 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - C: Seed is exposed only to the privileged replay-export call, not to any gameplay client.
 **Informal spec reference**: §4.4; §10.
 
+**Decision**: Option B — the game seed is included in the replay-export payload (04-REQ-061) so that downstream systems (Convex replay storage, test harnesses) can verify deterministic reproducibility.
+**Rationale**: The seed must be exported to Convex to become part of the persisted replay data. [01-REQ-059]'s constraint that the seed "shall not be accessible to any game client" is about preventing Centaur Servers from accessing the seed *during gameplay* — which would allow them to predict item spawns and gain an unfair advantage — not about preventing the seed from appearing in post-game replay data held by the privileged platform. The replay-export caller is authenticated per [03-REQ-048] and is therefore not a "game client" in the sense of [01-REQ-059]. Including the seed in the export is the only way to make 04-REQ-069's determinism guarantee externally verifiable.
+**Affected requirements/design elements**: 04-REQ-061 amended to explicitly include the per-game seed in the enumerated contents of the complete historical record.
+
 ---
 
-### 04-REVIEW-014: Final submission pass semantics inside SpacetimeDB
+### 04-REVIEW-014: Final submission pass semantics inside SpacetimeDB — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
@@ -448,6 +456,10 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - A: Entirely a Centaur Server concern; no additional 04 requirement needed. (Current draft assumption.)
 - B: Add a requirement that the runtime accepts staged moves up to the instant of `declare_turn_over`, and that turn resolution consumes whatever was staged at that instant (already implied by 04-REQ-038(a)).
 **Informal spec reference**: §6.8.
+
+**Decision**: Option A — the "final submission pass" is entirely a Centaur Server concern; no additional 04 requirement is needed.
+**Rationale**: From 04's perspective, the final submission is an ordinary burst of staged-move writes arriving via 04-REQ-024 before `declare_turn_over`. 04-REQ-038(a) already requires turn resolution to consume whatever was staged at the instant of declaration, so the runtime's behaviour is already fully specified. No runtime-side coordination barrier or dedicated reducer is required; the ordering is entirely the Centaur Server's responsibility.
+**Affected requirements/design elements**: None — 04-REQ-024 and 04-REQ-038(a) stand as drafted.
 
 ---
 
