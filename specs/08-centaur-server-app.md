@@ -8,7 +8,7 @@
 
 **08-REQ-002**: The application shall be served by the Snek Centaur Server runtime. It shall require authentication before exposing any functionality beyond a sign-in control and public, non-user-specific information (e.g., the public leaderboard per §8.19).
 
-**08-REQ-003**: The application shall execute as a browser client that communicates with (a) the Snek Centaur Server runtime for real-time subscriptions to in-memory bot-framework state it does not read directly from Convex, (b) the Convex deployment for reads and mutations against Centaur state ([06]) and platform-wide state ([05]) per [02-REQ-039], and (c) a game's SpacetimeDB instance via admission ticket per [02-REQ-038] when a game is live or being spectated.
+**08-REQ-003**: The application shall execute as a browser client that communicates with (a) the Snek Centaur Server runtime for real-time subscriptions to in-memory bot-framework state it does not read directly from Convex, (b) the Convex deployment for reads and mutations against Centaur state ([06]) and platform-wide state ([05]) per [02-REQ-039], and (c) a game's SpacetimeDB instance via OIDC-validated access token per [02-REQ-038] when a game is live or being spectated.
 
 **08-REQ-004**: A single Snek Centaur Server may host multiple Centaur Teams. The application shall present team-scoped views (heuristic configuration, bot parameters, live gameplay, team replay) in the context of a specific hosted Centaur Team, and shall present platform-wide views (room browsing, profiles, leaderboard) independent of any specific team.
 
@@ -24,9 +24,9 @@
 
 **08-REQ-008**: The application shall gate affordances that are restricted to specific team roles ([05-REQ-011]) — in particular the timekeeper affordances of §8.14 and the Captain-only affordances of §8.5 — on the authenticated human's current role as read from [05] via [06]. Role changes observed through subscription shall take effect in the UI without requiring the operator to reload the page.
 
-**08-REQ-009** *(negative)*: The application shall never issue a SpacetimeDB admission ticket on its own. Admission tickets for a game are obtained through the Convex-mediated issuance path of [05-REQ-035] and presented to SpacetimeDB by the browser.
+**08-REQ-009** *(negative)*: The application shall never issue a SpacetimeDB access token on its own. Access tokens for a game are obtained through the Convex-mediated issuance path of [05-REQ-035] and presented to SpacetimeDB by the browser.
 
-**08-REQ-009a** *(negative)*: The application shall not store, display, or transmit the plaintext of any admission ticket, API key, HMAC secret, or other credential material except during the single creation-time disclosure of an API key plaintext per [05-REQ-051] and [03-REQ-034].
+**08-REQ-009a** *(negative)*: The application shall not store, display, or transmit the plaintext of any SpacetimeDB access token, API key, or other credential material except during the single creation-time disclosure of an API key plaintext per [05-REQ-051] and [03-REQ-034].
 
 **08-REQ-009b**: The application shall provide a sign-out control that terminates the user's session on the client and revokes any client-held session tokens. After sign-out, the UI shall return to the unauthenticated state.
 
@@ -316,7 +316,7 @@
 
 **08-REQ-080**: The application shall provide a **Live Spectating** view for any game whose status is `playing` per [05-REQ-028]. The view shall be accessible to every authenticated user without requiring membership in any participating Centaur Team.
 
-**08-REQ-081**: Entry to the Live Spectating view shall cause the UI to obtain a **spectator admission ticket** for the target SpacetimeDB game instance, issued by Convex per [03-REQ-026], [05-REQ-035], and the spectator-ticket provisions of [03]. The UI shall present this ticket to the runtime when establishing its subscription connection per [04-REQ-018].
+**08-REQ-081**: Entry to the Live Spectating view shall cause the UI to obtain a **spectator SpacetimeDB access token** for the target SpacetimeDB game instance, issued by Convex per [03-REQ-026], [05-REQ-035], and the spectator-token provisions of [03]. The UI shall present this token to the runtime when establishing its subscription connection per [04-REQ-018].
 
 **08-REQ-082**: The Live Spectating view shall subscribe to the SpacetimeDB game instance's state using subscription patterns that satisfy [04-REQ-054]'s support for a current-state view with incremental updates. The UI shall render board state, snake states, items, hazards, fertile tiles, and turn events as delivered by the subscription, in real time.
 
@@ -326,13 +326,13 @@
 
 **08-REQ-085**: The Live Spectating view shall display the current turn number and, per participating team, the team's current remaining chess-timer budget and whether the team has declared its turn over for the current turn, consistent with the per-team time-budget data supplied by [04]'s subscription interface.
 
-**08-REQ-086** *(negative)*: The Live Spectating view shall not expose any affordance that stages moves, selects snakes, toggles operator modes, or otherwise mutates game-runtime or Centaur-runtime state. Spectator admission tickets per [03-REQ-026] do not authorise any such mutation and the UI shall not attempt any.
+**08-REQ-086** *(negative)*: The Live Spectating view shall not expose any affordance that stages moves, selects snakes, toggles operator modes, or otherwise mutates game-runtime or Centaur-runtime state. Spectator access tokens per [03-REQ-026] do not authorise any such mutation and the UI shall not attempt any.
 
 **08-REQ-087**: The Live Spectating view shall provide a **timeline scrubber** that permits the spectator to navigate to any previously completed turn of the current game and view the reconstructed board, snake, item, scoreboard, and event-log state at that turn, using the historical query capability of [04-REQ-057]. Scrubbing backward shall not interrupt the incoming live subscription; returning to the live head shall resume live rendering.
 
 **08-REQ-088**: While the spectator is scrubbed to a historical turn, the Live Spectating view shall visibly communicate to the user that the display is not live, and shall provide a one-action affordance to return to the live head.
 
-**08-REQ-089**: The Live Spectating view shall release its subscription and discard its spectator admission ticket when the user navigates away from the view or when the game transitions to `finished` per [05-REQ-028].
+**08-REQ-089**: The Live Spectating view shall release its subscription and discard its spectator access token when the user navigates away from the view or when the game transitions to `finished` per [05-REQ-028].
 
 ---
 

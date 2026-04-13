@@ -58,7 +58,7 @@
 
 **02-REQ-015**: The single Convex deployment shall be the sole persistent home of all platform state that must outlive any individual game, including but not limited to user accounts, Centaur Team records, room records, game records, replays, game configuration, and per-team Centaur subsystem state. (Specific table schemas are owned by [05] and [06].)
 
-**02-REQ-016**: Convex shall host all identity and credential infrastructure for the platform. (The mechanisms — OAuth, game-start invitation, admission ticket issuance — are owned by [03].)
+**02-REQ-016**: Convex shall host all identity and credential infrastructure for the platform. (The mechanisms — OAuth, game-start invitation, SpacetimeDB access token issuance via OIDC — are owned by [03].)
 
 **02-REQ-017**: Convex shall be the sole authority for intra-team coordination state, including the mapping between human operators and the snakes they have selected, manual-mode flags, and per-snake operator state. The SpacetimeDB runtime shall have no concept of which human within a team is acting on which snake; SpacetimeDB authorization is at the team level only.
 
@@ -82,7 +82,7 @@
 
 ### 2.5 Snek Centaur Server Runtime Responsibilities
 
-**02-REQ-023**: During a game, a Snek Centaur Server shall hold a live WebSocket subscription to the game's SpacetimeDB instance for each Centaur Team it hosts, observing game state in real time. A server hosting multiple Centaur Teams in the same game shall maintain separate SpacetimeDB WebSocket connections per team, each authenticated with that team's admission ticket.
+**02-REQ-023**: During a game, a Snek Centaur Server shall hold a live WebSocket subscription to the game's SpacetimeDB instance for each Centaur Team it hosts, observing game state in real time. A server hosting multiple Centaur Teams in the same game shall maintain separate SpacetimeDB WebSocket connections per team, each authenticated with that team's SpacetimeDB access token.
 
 **02-REQ-024**: During a game, a Snek Centaur Server shall use per-Centaur-Team game credentials (received at game start per [03]) to write Centaur subsystem state to Convex for each hosted team, including snake configuration, active Drives, and bot parameters.
 
@@ -108,7 +108,7 @@
 
 **02-REQ-032a**: The platform shall maintain a Snek Centaur Server reference implementation repository containing the full web application (all Svelte components covering both platform and team-internal pages), example Drives, example Preferences, and team Convex schema. Teams obtain and customise the web application by forking this repository and modifying their fork directly — full source ownership, not a bounded extension point. Correctness is enforced by Convex function contracts ([06]) and security enforcement points external to the library (02-REQ-033).
 
-**02-REQ-033** *(negative)*: The platform shall not rely on teams' use of the Snek Centaur Server library for any security or correctness invariant. All invariants that bound what a Snek Centaur Server may do shall be enforced by mechanisms external to the library — specifically by SpacetimeDB authorization rules, Convex function contracts, and admission ticket validation ([03]) — and shall hold equally against a Snek Centaur Server that bypasses the library entirely.
+**02-REQ-033** *(negative)*: The platform shall not rely on teams' use of the Snek Centaur Server library for any security or correctness invariant. All invariants that bound what a Snek Centaur Server may do shall be enforced by mechanisms external to the library — specifically by SpacetimeDB authorization rules (OIDC-validated JWT + `client_connected` checks), Convex function contracts, and SpacetimeDB access token validation ([03]) — and shall hold equally against a Snek Centaur Server that bypasses the library entirely.
 
 ---
 
@@ -132,7 +132,7 @@
 
 **02-REQ-040**: The operator interface shall be served to a team's human members from the Snek Centaur Server that the team has nominated.
 
-**02-REQ-041**: Human spectators shall connect directly to a game's SpacetimeDB instance via WebSocket using a read-only admission ticket ([03]). Spectator connections shall be subject to invisibility filtering ([02-REQ-010]): because spectators are affiliated with no team, they are treated as opponents of every team for RLS purposes and shall not see any team's invisible snakes.
+**02-REQ-041**: Human spectators shall connect directly to a game's SpacetimeDB instance via WebSocket using a spectator SpacetimeDB access token ([03]). Spectator connections shall be subject to invisibility filtering ([02-REQ-010]): because spectators are affiliated with no team, they are treated as opponents of every team for RLS purposes and shall not see any team's invisible snakes.
 
 ---
 
@@ -253,7 +253,7 @@ Satisfies 02-REQ-015 through 02-REQ-022a, 02-REQ-050, 02-REQ-051.
 
 **Persistent state home** (02-REQ-015). All state that must outlive a game lives in the single Convex deployment. The Convex schema is partitioned between platform-wide tables (owned by [05]) and Centaur-subsystem tables (owned by [06]). Both table sets live in the same Convex schema namespace and share a single transactional boundary, which is why the "exactly one Convex deployment" constraint (02-REQ-002) is load-bearing — downstream modules rely on cross-table transactional consistency (e.g., enforcing selection invariants across `snake_config` rows atomically).
 
-**Identity infrastructure** (02-REQ-016). Convex hosts all authentication mechanisms: Google OAuth for humans, game-start invitation flow for Snek Centaur Servers, and admission ticket issuance with HMAC signing for SpacetimeDB connections. The specific mechanisms are owned by [03]; module 02 establishes that Convex is the sole host.
+**Identity infrastructure** (02-REQ-016). Convex hosts all authentication mechanisms: Google OAuth for humans, game-start invitation flow for Snek Centaur Servers, and SpacetimeDB access token issuance with RS256 signing validated via OIDC discovery. The specific mechanisms are owned by [03]; module 02 establishes that Convex is the sole host.
 
 **Selection discipline** (02-REQ-017, 02-REQ-018). The mapping of human operators to snakes (selection state) is owned by Convex, not SpacetimeDB. SpacetimeDB authorizes at the team level only — any connection authenticated as a member of team T can stage moves for any snake belonging to T. The at-most-one-operator-per-snake and at-most-one-snake-per-operator invariants (02-REQ-018) are enforced by Convex function contracts in the Centaur subsystem (owned by [06]). This separation means SpacetimeDB's authorization model is simple (team-scoped), while fine-grained operator coordination is handled by Convex where the Centaur subsystem state already lives.
 
@@ -275,7 +275,7 @@ type GameStatus = 'not-started' | 'playing' | 'finished'
 2. Generates the board: if the room owner has locked in a board preview, uses that exact board; otherwise, runs `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this Convex mutation; failure produces a structured error surfaced reactively to the room owner, and provisioning does not proceed.
 3. Provisions a fresh SpacetimeDB instance via SpacetimeDB's cloud provisioning API.
 4. Deploys the game engine module to the instance.
-5. Calls the `initialize_game` reducer with the pre-computed initial game state (cell terrain, snake starting positions, initial items), the dynamic gameplay parameters (potion/food spawn rates, hazard damage, timer budgets, turn caps, etc.), team membership, and HMAC secret. Convex calls the STDB reducer via SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}` with JSON body and bearer token auth) from a Convex HTTP action.
+5. Calls the `initialize_game` reducer with the pre-computed initial game state (cell terrain, snake starting positions, initial items), the dynamic gameplay parameters (potion/food spawn rates, hazard damage, timer budgets, turn caps, etc.), and team membership. No per-instance secret is seeded — SpacetimeDB validates client connections via OIDC discovery against the Convex platform's public key. Convex calls the STDB reducer via SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}` with JSON body and bearer token auth) from a Convex HTTP action.
 6. Sends game invitations to each participating Centaur Team's nominated server domain (per [03]).
 7. Upon acceptance by all servers, updates the game record with the instance URL and transitions status to `playing`.
 
@@ -322,7 +322,7 @@ Satisfies 02-REQ-023 through 02-REQ-029, 02-REQ-053, 02-REQ-054, 02-REQ-055, 02-
 
 **Multi-tenant per-team subscription model** (02-REQ-023, 02-REQ-024). During a game, the server maintains separate subscriptions per hosted Centaur Team:
 
-- **SpacetimeDB**: One WebSocket connection per hosted team, each authenticated with that team's admission ticket (obtained via the game credential per [03]). Each connection subscribes to game state tables filtered by RLS and stages bot-computed moves via the `stage_move` reducer.
+- **SpacetimeDB**: One WebSocket connection per hosted team, each authenticated with that team's SpacetimeDB access token (RS256-signed JWT obtained via the game credential per [03], validated by SpacetimeDB via OIDC). Each connection subscribes to game state tables filtered by RLS and stages bot-computed moves via the `stage_move` reducer.
 
 - **Convex**: Writes to the team's Centaur subsystem state using the per-team game credential received in the invitation. The server writes state updates (snake state maps, worst-case worlds, annotations, heuristic outputs) and action log entries.
 
@@ -383,7 +383,7 @@ No other extension points exist. The library does not expose hooks for overridin
 |-----------|-------------------|
 | Move staging restricted to team's snakes | SpacetimeDB `stage_move` reducer validates team membership via `team_permissions` table |
 | Invisible snakes hidden from opponents | SpacetimeDB RLS filters at the data layer |
-| Admission ticket validity | SpacetimeDB `register` reducer validates HMAC signature |
+| Connection authentication | SpacetimeDB validates RS256-signed JWT via OIDC; `client_connected` checks `aud` and `sub` claims |
 | Selection discipline (≤1 operator per snake) | Convex function contracts in [06] |
 | Game credential scope (per-team, per-game) | Convex validates credential scope on every write |
 
@@ -468,7 +468,7 @@ Operator Browser
     └── Mutate: action log (append action entries)
 ```
 
-The SpacetimeDB connection provides low-latency game state and real-time move staging. The Convex connection provides Centaur subsystem state (which is not in SpacetimeDB) and supports the operator coordination features (selection, Drive management, action logging). Both connections authenticate independently: the SpacetimeDB connection uses an HMAC-signed admission ticket ([03]), and the Convex connection uses the operator's Google OAuth session.
+The SpacetimeDB connection provides low-latency game state and real-time move staging. The Convex connection provides Centaur subsystem state (which is not in SpacetimeDB) and supports the operator coordination features (selection, Drive management, action logging). Both connections authenticate independently: the SpacetimeDB connection uses an RS256-signed JWT issued by Convex and validated via OIDC ([03]), and the Convex connection uses the operator's Google OAuth session.
 
 **Spectator connection model** (02-REQ-041). When spectating a game, the browser client connects to:
 
@@ -481,7 +481,7 @@ Spectator Browser
     └── Subscribe: platform state (game record, room state)
 ```
 
-The SpacetimeDB connection uses a read-only admission ticket ([03]) that authorizes subscription queries but does not authorize any reducer calls (no `stage_move`, no `declare_turn_over`). Spectating connections are subject to the same RLS invisibility filtering as opponent team connections — spectators cannot see invisible snakes of any team (02-REQ-010). The Convex connection provides reactive platform state updates (game record status, room state). Outside of spectating, the web client uses only its Convex client connection for platform features (rooms, profiles, leaderboards).
+The SpacetimeDB connection uses a spectator access token ([03]) — an RS256-signed JWT with `sub: "spectator:{operatorId}"` — that authorizes subscription queries but does not authorize any reducer calls (no `stage_move`, no `declare_turn_over`). Spectating connections are subject to the same RLS invisibility filtering as opponent team connections — spectators cannot see invisible snakes of any team (02-REQ-010). The Convex connection provides reactive platform state updates (game record status, room state). Outside of spectating, the web client uses only its Convex client connection for platform features (rooms, profiles, leaderboards).
 
 **Operator web app serving** (02-REQ-040). The operator interface is served by the team's nominated Snek Centaur Server. The server serves static assets (HTML, JS, CSS) over HTTP and the browser client establishes the dual connections described above. Since every Snek Centaur Server serves the same unified web application, a user can visit any server for platform pages; the operator interface for a specific team is accessed via the server that team has nominated.
 
@@ -587,7 +587,7 @@ export interface SpacetimeDbInstanceLifecycle {
       }
       readonly dynamicGameplayParams: DynamicGameplayParams
       readonly teamMembership: ReadonlyArray<TeamMembershipRecord>
-      readonly hmacSecret: Uint8Array
+      readonly gameId: string
     }
   }
   readonly teardown: {
@@ -604,7 +604,7 @@ export interface TeamMembershipRecord {
 
 `Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps — as opposed to board generation parameters. `TeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase; STDB does not call that function.
 
-**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters — not the full `GameConfig` and not a game seed for generation. [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [03] must define the game credential generation and the admission ticket format that SpacetimeDB validates.
+**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters — not the full `GameConfig` and not a game seed for generation. [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
 
 ### 3.5 Shared Engine Codebase Contract
 
@@ -687,9 +687,9 @@ export interface SecurityEnforcementModel {
     readonly enforcedBy: 'SpacetimeDB RLS'
     readonly mechanism: 'Row filter on snake visibility flag × connection team membership'
   }
-  readonly admissionTicketValidation: {
-    readonly enforcedBy: 'SpacetimeDB register reducer'
-    readonly mechanism: 'HMAC signature verification (secret seeded at instance init)'
+  readonly connectionAuthentication: {
+    readonly enforcedBy: 'SpacetimeDB OIDC validation + client_connected callback'
+    readonly mechanism: 'RS256 JWT signature verified via OIDC discovery; aud/sub claims checked in client_connected'
   }
   readonly selectionInvariants: {
     readonly enforcedBy: 'Convex function contracts'
@@ -712,7 +712,7 @@ Motivated by 02-REQ-038, 02-REQ-039, 02-REQ-041, 02-REQ-055, 02-REQ-056.
 export interface OperatorConnectionModel {
   readonly spacetimeDb: {
     readonly transport: 'WebSocket'
-    readonly authMechanism: 'HMAC admission ticket via register reducer'
+    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: operator:{operatorId})'
     readonly capabilities: readonly ['subscribe_game_state', 'stage_move', 'declare_turn_over']
   }
   readonly convex: {
@@ -725,7 +725,7 @@ export interface OperatorConnectionModel {
 export interface SpectatorConnectionModel {
   readonly spacetimeDb: {
     readonly transport: 'WebSocket'
-    readonly authMechanism: 'Read-only HMAC admission ticket via register reducer'
+    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: spectator:{operatorId})'
     readonly capabilities: readonly ['subscribe_game_state']
   } | null
   readonly convex: {
@@ -738,7 +738,7 @@ export interface SpectatorConnectionModel {
 export interface SnekCentaurServerConnectionModel {
   readonly spacetimeDb: {
     readonly transport: 'WebSocket (one per hosted Centaur Team)'
-    readonly authMechanism: 'HMAC admission ticket via register reducer (role: bot)'
+    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: centaur:{centaurTeamId})'
     readonly capabilities: readonly ['subscribe_game_state', 'stage_move', 'declare_turn_over']
   }
   readonly convex: {
@@ -753,7 +753,7 @@ export interface SnekCentaurServerConnectionModel {
 }
 ```
 
-**DOWNSTREAM IMPACT**: [03] must issue distinct admission ticket types for operators (role: `human`), bot participants (role: `bot`), and spectators (role: `spectator`, read-only). [04] must enforce capability restrictions based on the ticket's role — spectators cannot call `stage_move` or `declare_turn_over`. [08] must implement the operator dual-connection flow, the spectator connection flow, and the multi-tenant server connection management.
+**DOWNSTREAM IMPACT**: [03] must issue distinct SpacetimeDB access tokens for operators (`sub: "operator:..."`), bot participants (`sub: "centaur:..."`), and spectators (`sub: "spectator:..."`). [04] must enforce capability restrictions based on the `sub` prefix — spectators cannot call `stage_move` or `declare_turn_over`. [08] must implement the operator dual-connection flow, the spectator connection flow, and the multi-tenant server connection management.
 
 ### 3.9 Snek Centaur Server Lifecycle Contract
 
@@ -771,7 +771,7 @@ export interface SnekCentaurServerLifecycle {
     readonly role: 'static web host + bot computation host'
     readonly perTeam: {
       readonly gameCredential: 'per-Centaur-Team, per-game, bounded lifetime'
-      readonly spacetimeDbConnection: 'WebSocket, authenticated per-team admission ticket'
+      readonly spacetimeDbConnection: 'WebSocket, authenticated per-team RS256-signed JWT via OIDC'
       readonly convexWrites: 'centaur subsystem state via game credential'
     }
     readonly multiTenancy: {

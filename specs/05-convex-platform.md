@@ -109,7 +109,7 @@
 
 **05-REQ-029**: Convex shall maintain, for every game, a persistent record of which Centaur Teams are participating in that game and, for each such team, a snapshot of the team's authorized human members and their roles at the moment the game was created. This snapshot shall be treated as append-only historical fact per [03-REQ-047] and shall be used by Convex to seed the SpacetimeDB instance's admission authorization state at initialization time ([03-REQ-039]).
 
-**05-REQ-030**: The game's participating-teams snapshot shall be used, in combination with the Centaur Team records of [05-REQ-008], to determine which humans are authorized to obtain admission tickets for the game, consistent with [03-REQ-024].
+**05-REQ-030**: The game's participating-teams snapshot shall be used, in combination with the Centaur Team records of [05-REQ-008], to determine which operators are authorized to obtain SpacetimeDB access tokens for the game, consistent with [03-REQ-024].
 
 **05-REQ-031**: Convex shall permit the administrative actor for a room (per [05-REQ-017]) to initiate a game start when all participating Centaur Teams have marked themselves ready and the room has at least two enrolled teams. Upon successful game start, Convex shall create the game record in the `not-started` status and proceed to provisioning per [05-REQ-032].
 
@@ -119,7 +119,7 @@
 2. Obtain the initial game state: if the room owner has locked in a board preview ([05-REQ-032b]), use that exact pre-computed board state; otherwise, run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this mutation; if all attempts fail, the mutation produces a structured `BoardGenerationFailure` error that is surfaced reactively to the room owner (see [05-REQ-032c]), and the orchestration does not proceed.
 3. Provision a fresh SpacetimeDB game instance per [02-REQ-003] and [02-REQ-020].
 4. Deploy the shared engine codebase ([02-REQ-035]) into that instance.
-5. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's admission authorization state per [03-REQ-039], and the instance's unique admission-ticket validation secret ([03-REQ-022]). Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
+5. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's connection authorization state per [03-REQ-039], and the game's unique identifier (for `aud` claim validation in `client_connected`). No per-instance signing secret is passed — client authentication uses OIDC-based JWT validation against the platform's public key (see [03] §3.17). Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
 6. Send game invitations to each participating Centaur Team's nominated server domain (per [03]).
 7. Upon acceptance by all servers, update the game record with the instance URL and transition the game's status to `playing`.
 
@@ -143,9 +143,11 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-033** *(negative)*: Convex shall not provision a SpacetimeDB game instance before a game record has been created for it, and shall not create a game record without intending to provision an instance for it. Unorphaned instance-less game records and game-less instances are both disallowed states.
 
-**05-REQ-034**: Convex shall provision a fresh admission-ticket validation secret per SpacetimeDB instance at initialization time ([03-REQ-022]). This secret shall be retained by Convex for the duration of the game so that Convex can sign admission tickets for the instance under [03-REQ-019] and [03-REQ-021]. Convex shall not retain the secret after the instance has been torn down and the replay has been persisted.
+**05-REQ-034**: Convex shall maintain a platform-wide RSA key pair for signing SpacetimeDB access tokens per [03-REQ-022]. The private key shall be stored as a Convex environment variable (`SPACETIMEDB_SIGNING_KEY`). The public key shall be served via OIDC discovery endpoints (see [05-REQ-034a]). No per-instance signing secret is provisioned — the platform-wide key pair is used for all game instances.
 
-**05-REQ-035**: The Convex runtime shall be the sole issuer of admission tickets for every SpacetimeDB game instance it provisions, consistent with [03-REQ-019], [03-REQ-024], and [03-REQ-026]. The Convex runtime shall refuse to issue an admission ticket whose target game is in the `finished` status.
+**05-REQ-034a**: Convex shall serve two HTTP actions at `CONVEX_SITE_URL` (the `.convex.site` domain) that together constitute a standards-compliant OIDC discovery surface: (a) `GET /.well-known/openid-configuration` returning a JSON document with `issuer`, `jwks_uri`, `id_token_signing_alg_values_supported`, and `subject_types_supported` fields; and (b) `GET /.well-known/jwks.json` returning the RSA public key in JWK format. These endpoints enable SpacetimeDB instances to validate access tokens without any per-instance secret exchange.
+
+**05-REQ-035**: The Convex runtime shall be the sole issuer of SpacetimeDB access tokens for every SpacetimeDB game instance it provisions, consistent with [03-REQ-019], [03-REQ-024], and [03-REQ-026]. The Convex runtime shall refuse to issue a SpacetimeDB access token whose target game is in the `finished` status.
 
 **05-REQ-036**: When a Snek Centaur Server hosting a participating Centaur Team's `nominatedServerDomain` returns unhealthy from the healthcheck endpoint ([02-REQ-029]) at a moment Convex is preparing to transition a game to `playing`, Convex shall not transition the game to `playing`. The specific recovery action (retry, abort, surface error to operator) is unspecified at the requirements level and shall be determined in Design.
 
@@ -163,7 +165,7 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-041**: The persisted replay shall be sufficient, in combination with the Centaur subsystem action log owned by [06], to reconstruct the complete turn-level history of the game for the unified replay viewer ([08]).
 
-**05-REQ-042**: While persisting a replay, Convex shall resolve every `stagedBy` attribution in the game record to its Convex-interpretable form per [03-REQ-045]. The persisted replay shall not contain any raw SpacetimeDB connection Identity in a `stagedBy` field.
+**05-REQ-042**: While persisting a replay, Convex shall verify that every `stagedBy` attribution in the game record is in its Convex-interpretable `Agent` form per [03-REQ-045]. Under the current architecture, `stagedBy` fields are already stored as `Agent` values at connection time (via `client_connected` and [04-REQ-020]), so no serialization-time resolution step is required — this requirement is a defensive check. The persisted replay shall not contain any raw SpacetimeDB connection Identity in a `stagedBy` field.
 
 **05-REQ-043** *(negative)*: Convex shall not begin replay persistence until the game's status has reached the moment at which the SpacetimeDB instance's authoritative game record is final — that is, not before the SpacetimeDB-side terminal state has been signalled per [05-REQ-038].
 
@@ -179,7 +181,7 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-047**: The HTTP API's authorization scope for a given API key shall be bounded by the authorization scope of the human who created the key, per [03-REQ-035]. If the creating human's team memberships or role assignments change such that their current authorization scope shrinks, the API key's scope shall shrink correspondingly. Convex shall not grant an API key any authorization its creator cannot currently exercise through the Snek Centaur Server frontend.
 
-**05-REQ-048** *(negative)*: The HTTP API shall not expose endpoints that create human identities, that perform Google OAuth interactions, that issue admission tickets directly, or that modify Centaur-subsystem state owned by [06]. These affordances are prohibited for API keys by [03-REQ-036].
+**05-REQ-048** *(negative)*: The HTTP API shall not expose endpoints that create human identities, that perform Google OAuth interactions, that issue SpacetimeDB access tokens directly, or that modify Centaur-subsystem state owned by [06]. These affordances are prohibited for API keys by [03-REQ-036].
 
 **05-REQ-049**: The HTTP API shall expose at minimum the following endpoint families. Exact URL shapes and payload schemas are owned by Design; requirements here enumerate the capabilities that must be present.
 
@@ -254,17 +256,12 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 ## REVIEW Items
 
-### 05-REVIEW-001: Convex retention of admission-ticket validation secret
+### 05-REVIEW-001: Convex retention of admission-ticket validation secret — **RESOLVED (obsolete)**
 
 **Type**: Ambiguity
 **Phase**: Requirements
-**Context**: [03-REQ-022] says each SpacetimeDB instance's admission-ticket validation secret is unique and provisioned to that instance at init time. [03-REQ-019] says Convex issues admission tickets, which implies Convex must also hold the secret in order to sign them for the instance to verify. [03-REQ-043] says credential material must only be transmitted over trusted channels to its intended holder. 05-REQ-034 elevates this to a requirement that Convex retains its copy of the secret for the game's duration and drops it at teardown. The informal spec (§2, §11 `games.hmacSecret`) stores the secret in the `games` table, implying persistent Convex storage keyed by game id.
-**Question**: Is persistent storage of the admission secret in the `games` row (a) the intended design, (b) acceptable given the threat model, and (c) expected to be dropped at teardown or retained indefinitely in the game record for audit purposes?
-**Options**:
-- A: Store in `games` row for the game's duration, drop at teardown (current draft of 05-REQ-034).
-- B: Store in a separate short-lived secrets table that is cleaned up independently of the game record.
-- C: Retain indefinitely alongside the game record for audit; rely on secret rotation / key-at-rest encryption for safety.
-**Informal spec reference**: §2, §3 ("SpacetimeDB Admission Tickets"), §11 (`games.hmacSecret`).
+**Original context**: This review item asked how Convex should store and manage the per-instance HMAC admission-ticket validation secret — whether in the `games` row, a separate secrets table, or retained indefinitely for audit.
+**Resolution**: The OIDC auth redesign eliminates per-instance signing secrets entirely. Convex now maintains a single platform-wide RSA key pair (private key in `SPACETIMEDB_SIGNING_KEY` env var, public key served via OIDC JWKS endpoint) for signing all SpacetimeDB access tokens. No per-game secret is generated, stored, or cleaned up. 05-REQ-034 has been rewritten to reflect this. The storage, lifecycle, and cleanup questions that motivated this review item no longer apply.
 
 ---
 
