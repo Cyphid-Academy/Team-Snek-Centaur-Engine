@@ -98,7 +98,7 @@
 
 **03-REQ-020**: A SpacetimeDB access token shall carry, at minimum, the following information:
 - (a) the identifier of the game instance for which admission is granted (as the JWT `aud` claim);
-- (b) a structured `sub` claim encoding the connection's identity kind and team binding: `"centaur:{centaurTeamId}"` for bot participants, `"operator:{operatorId}"` for operator participants, or `"spectator:{operatorId}"` for spectators;
+- (b) a structured `sub` claim encoding the connection's identity kind and team binding: `"centaur:{centaurTeamDocId}"` for bot participants, `"operator:{operatorId}"` for operator participants, or `"spectator:{operatorId}"` for spectators;
 - (c) an expiry time beyond which the token shall not be accepted.
 
 **03-REQ-021**: SpacetimeDB shall validate each connection's JWT by verifying its RS256 signature against the platform's public key, obtained via OIDC discovery from the issuer URL. Validation occurs automatically at connection time via SpacetimeDB's built-in OIDC support; the `client_connected` lifecycle callback then reads the validated claims from `ctx.sender_auth().jwt()` and associates the connection with the team and role derived from the `sub` claim. The team and role association established at connection shall persist for the lifetime of that connection without further token re-checks, and subsequent expiry of the access token shall not cause an already-connected client to be disconnected.
@@ -135,9 +135,9 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 **03-REQ-031**: The SpacetimeDB game instance shall subject every admitted connection — including bot participants, human participants, and spectators — to the invisibility filter of [02-REQ-010] whenever the connection does not belong to the snake's owning team. Spectator connections shall be filtered on the same terms as opponent connections.
 
-**03-REQ-032**: Each staged move recorded in the game's turn log (per [04], informal spec Section 14) shall carry a `stagedBy` attribution. Within the SpacetimeDB game instance, `stagedBy` shall hold an `Agent` value (as defined by [01]: `{kind: 'centaur_team', centaurTeamId}` for Centaur Server connections, or `{kind: 'operator', operatorId}` for operator-authenticated connections) — resolved from the connecting client's JWT `sub` claim at `client_connected` time per [04-REQ-020], not at turn-resolution or replay-export time. SpacetimeDB turn-resolution logic shall not perform any further interpretation of or branching on the `Agent` value, consistent with [02-REQ-030]. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
+**03-REQ-032**: Each staged move recorded in the game's turn log (per [04], informal spec Section 14) shall carry a `stagedBy` attribution. Within the SpacetimeDB game instance, `stagedBy` shall hold an `Agent` value (as defined by [01]: `{kind: 'centaur_team', centaurTeamDocId}` for Centaur Server connections, or `{kind: 'operator', operatorId}` for operator-authenticated connections) — resolved from the connecting client's JWT `sub` claim at `client_connected` time per [04-REQ-020], not at turn-resolution or replay-export time. SpacetimeDB turn-resolution logic shall not perform any further interpretation of or branching on the `Agent` value, consistent with [02-REQ-030]. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
 
-**03-REQ-044**: The SpacetimeDB game instance shall, at the time of each `client_connected` callback, resolve the connecting client's JWT `sub` claim to an `Agent` value (bot connections with `sub: "centaur:{centaurTeamId}"` yield `{kind: 'centaur_team', centaurTeamId}`; operator connections with `sub: "operator:{operatorId}"` yield `{kind: 'operator', operatorId}`). This resolved `Agent` shall be stored in the participant attribution record per [04-REQ-020] and used immediately as the `stagedBy` value for any moves staged by that connection. The participant attribution record shall be retained for the full duration of the game — including for connections that have since been closed or replaced by reconnection — so that historical `stagedBy: Agent` values remain consistent. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
+**03-REQ-044**: The SpacetimeDB game instance shall, at the time of each `client_connected` callback, resolve the connecting client's JWT `sub` claim to an `Agent` value (bot connections with `sub: "centaur:{centaurTeamDocId}"` yield `{kind: 'centaur_team', centaurTeamDocId}`; operator connections with `sub: "operator:{operatorId}"` yield `{kind: 'operator', operatorId}`). This resolved `Agent` shall be stored in the participant attribution record per [04-REQ-020] and used immediately as the `stagedBy` value for any moves staged by that connection. The participant attribution record shall be retained for the full duration of the game — including for connections that have since been closed or replaced by reconnection — so that historical `stagedBy: Agent` values remain consistent. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
 
 **03-REQ-045**: When Convex persists the game record from the SpacetimeDB game instance at game end (per [02-REQ-022]), `stagedBy` fields in the serialized record already carry `Agent` values (resolved at registration time per [03-REQ-044] and [04-REQ-020]); no additional Identity→email/team-reference resolution step is required during serialization. The persisted game record shall not contain raw SpacetimeDB Identities in any `stagedBy` field — this invariant is upheld by the registration-time resolution, not by a serialization-time mapping pass. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
 
@@ -203,7 +203,7 @@ interface HumanIdentityFields {
 
 `operatorId` for a human user is the Convex `_id` of their `users` record (type `Id<'users'>`), cast to the branded `OperatorId` type (`string & { readonly __brand: 'OperatorId' }`). No separate allocation step is required — the `_id` is assigned by Convex when the record is created. Email is the canonical identity for all platform-level lookups (team membership, admin checks, API key ownership); `operatorId` is the stable, opaque identifier used in `Agent` values and `sub` claims within SpacetimeDB game instances.
 
-**Centaur Team identities** (03-REQ-001, 03-REQ-003). Each Centaur Team is represented by a record in the Convex `centaur_teams` table. The canonical identifier is the Convex document `_id`. This `_id` is also the `centaurTeamId` used in `Agent` values — there is no separate numeric identifier. The `centaur_teams` table is owned by [05]; this module specifies only the identity-relevant fields:
+**Centaur Team identities** (03-REQ-001, 03-REQ-003). Each Centaur Team is represented by a record in the Convex `centaur_teams` table. The canonical identifier is the Convex document `_id`. This `_id` is also the `centaurTeamDocId` used in `Agent` values — there is no separate numeric identifier. The `centaur_teams` table is owned by [05]; this module specifies only the identity-relevant fields:
 
 ```typescript
 interface CentaurTeamIdentityFields {
@@ -212,14 +212,14 @@ interface CentaurTeamIdentityFields {
 }
 ```
 
-`centaurTeamId` for a team is the Convex `_id` of its `centaur_teams` record (type `Id<'centaur_teams'>`), cast to the branded `CentaurTeamId` type (`string & { readonly __brand: 'CentaurTeamId' }`). No counter document or allocation step is needed.
+`centaurTeamDocId` for a team is the Convex `_id` of its `centaur_teams` record (type `Id<'centaur_teams'>`), cast to the branded `CentaurTeamDocId` type (`string & { readonly __brand: 'CentaurTeamDocId' }`). No counter document or allocation step is needed.
 
 **Game-participant identities** (03-REQ-004). Game-participant identities are derived, not stored as persistent records. They exist as the association between a SpacetimeDB connection and a team+role, established when the `client_connected` lifecycle callback parses the JWT `sub` claim (Section 3.17). Three roles exist:
 
 | Role | Derived from | Agent value | Move staging |
 |------|-------------|-------------|--------------|
 | Operator participant | Human identity + team membership | `{kind: 'operator', operatorId}` | Yes (team-scoped) |
-| Bot participant | Centaur Team identity (via game credential) | `{kind: 'centaur_team', centaurTeamId}` | Yes (team-scoped) |
+| Bot participant | Centaur Team identity (via game credential) | `{kind: 'centaur_team', centaurTeamDocId}` | Yes (team-scoped) |
 | Spectator | Human identity (no team binding) | N/A (no move staging) | No |
 
 **Elimination of "Centaur Server identity"** (03-REQ-049). Snek Centaur Servers have no persistent identity on the platform. A server domain is a configuration field on the Centaur Team record (`nominatedServerDomain`), not an identity. A server receives credentials only when invited to a game, and those credentials are scoped to a Centaur Team and game, not to the server itself.
@@ -229,12 +229,12 @@ interface CentaurTeamIdentityFields {
 ```typescript
 type PlatformIdentity =
   | { readonly kind: 'human'; readonly email: string; readonly operatorId: OperatorId }
-  | { readonly kind: 'centaur_team_credential'; readonly centaurTeamId: Id<'centaur_teams'>; readonly gameId: Id<'games'> }
+  | { readonly kind: 'centaur_team_credential'; readonly centaurTeamDocId: Id<'centaur_teams'>; readonly gameId: Id<'games'> }
 
 function resolveIdentity(identity: UserIdentity): PlatformIdentity
 ```
 
-The `resolveIdentity` helper inspects the `tokenIdentifier` prefix: identities from the Google OAuth provider carry the `email` claim and are resolved as `kind: 'human'` (with `operatorId` derived as `Id<'users'>` cast to `OperatorId`); identities from the custom JWT provider (Section 3.15) carry `centaurTeamId` and `gameId` claims and are resolved as `kind: 'centaur_team_credential'` (with the `centaurTeamId` claim value directly usable as the `CentaurTeamId` branded type — the Convex `_id` and the `Agent`-level identifier are identical). No identity can be ambiguous (03-REQ-005) because the two authentication providers produce disjoint claim shapes.
+The `resolveIdentity` helper inspects the `tokenIdentifier` prefix: identities from the Google OAuth provider carry the `email` claim and are resolved as `kind: 'human'` (with `operatorId` derived as `Id<'users'>` cast to `OperatorId`); identities from the custom JWT provider (Section 3.15) carry `centaurTeamDocId` and `gameId` claims and are resolved as `kind: 'centaur_team_credential'` (with the `centaurTeamDocId` claim value directly usable as the `CentaurTeamDocId` branded type — the Convex `_id` and the `Agent`-level identifier are identical). No identity can be ambiguous (03-REQ-005) because the two authentication providers produce disjoint claim shapes.
 
 **No anonymous participants** (03-REQ-006). Every Convex mutation and query that reads or writes user-scoped state requires an authenticated identity. Every SpacetimeDB connection that stages moves must present a valid RS256-signed JWT at connection time, validated via OIDC and processed by the `client_connected` callback. There is no anonymous path.
 
@@ -280,31 +280,31 @@ interface GameCredentialClaims {
   readonly iss: 'snek-centaur-platform'
   readonly aud: 'snek-centaur-platform'
   readonly sub: string
-  readonly centaurTeamId: string
+  readonly centaurTeamDocId: string
   readonly gameId: string
   readonly iat: number
   readonly exp: number
 }
 ```
 
-- `sub`: A composite subject string `"team:{centaurTeamId}:game:{gameId}"` that uniquely identifies this credential's scope.
-- `centaurTeamId`: The Convex document ID of the Centaur Team (as a string). This value IS the `centaurTeamId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`) — the JWT claim and the `Agent` field are the same Convex `_id`.
+- `sub`: A composite subject string `"team:{centaurTeamDocId}:game:{gameId}"` that uniquely identifies this credential's scope.
+- `centaurTeamDocId`: The Convex document ID of the Centaur Team (as a string). This value IS the `centaurTeamDocId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamDocId}`) — the JWT claim and the `Agent` field are the same Convex `_id`.
 - `gameId`: The Convex document ID of the game (as a string).
 - `iat`: Issuance timestamp (Unix seconds).
 - `exp`: Expiry timestamp. The JWT `exp` claim is **not the primary expiry mechanism**. The primary mechanism is Convex checking `game.status === 'playing'` on every request authenticated by this credential — a request against a finished or not-started game is rejected regardless of JWT validity. The `exp` value is set generously to ensure the credential does not expire before the game ends under any realistic game configuration: `iat + 604800` (7 days). This value is a defensive upper bound, not a behavioral parameter. Because Convex rejects requests for non-playing games at the application layer (see "Runtime validation" below), the JWT `exp` serves only as a fail-safe against indefinite credential validity if the application-level check were bypassed. The game credential's effective lifetime is bounded to the game per 03-REQ-058 — it becomes useless (rejected by Convex) as soon as the game transitions out of `playing` status, regardless of the JWT's `exp` timestamp. In the unlikely event that a game configuration permits durations exceeding 7 days, the JWT would expire before the game ends; this is a known limitation of the fixed-expiry approach, and would require either increasing the backstop duration or implementing a credential renewal mechanism. This scenario is considered out-of-scope for the initial design because game configurations are expected to bound total game duration to well under 7 days.
 
-**Convex Auth integration**. The Convex Auth configuration includes a `customJwt` provider named `"gameCredential"`. When a Snek Centaur Server presents the JWT as a bearer token via the Convex client, Convex Auth validates the signature against the configured public key and makes the claims available via `auth.getUserIdentity()`. The `resolveIdentity` helper (Section 3.13) detects game credentials by the presence of the `centaurTeamId` claim.
+**Convex Auth integration**. The Convex Auth configuration includes a `customJwt` provider named `"gameCredential"`. When a Snek Centaur Server presents the JWT as a bearer token via the Convex client, Convex Auth validates the signature against the configured public key and makes the claims available via `auth.getUserIdentity()`. The `resolveIdentity` helper (Section 3.13) detects game credentials by the presence of the `centaurTeamDocId` claim.
 
 **Runtime validation beyond JWT verification**. JWT signature verification confirms the credential was issued by Convex. But Convex function code must additionally verify at every mutation/query:
 1. The `gameId` references an existing game with `status === 'playing'`.
-2. The `centaurTeamId` references a Centaur Team that is a participant in the game.
+2. The `centaurTeamDocId` references a Centaur Team that is a participant in the game.
 3. The requested operation is within the credential's authorized scope (centaur subsystem state for the team, or SpacetimeDB access token issuance for the team's bot participants).
 
 These checks are implemented as a shared authorization helper used by every Convex function that accepts game credentials.
 
-**Scope isolation** (03-REQ-016, 03-REQ-057). The `centaurTeamId` and `gameId` claims bind the credential to exactly one team and one game. Every Convex function that processes a game credential checks the calling identity's `centaurTeamId` against the resource being accessed. A credential issued for team A cannot access team B's state because the `centaurTeamId` in the JWT does not match team B's ID.
+**Scope isolation** (03-REQ-016, 03-REQ-057). The `centaurTeamDocId` and `gameId` claims bind the credential to exactly one team and one game. Every Convex function that processes a game credential checks the calling identity's `centaurTeamDocId` against the resource being accessed. A credential issued for team A cannot access team B's state because the `centaurTeamDocId` in the JWT does not match team B's ID.
 
-**Identity resolution** (03-REQ-017). When Convex function code receives a request authenticated by a game credential, `resolveIdentity()` returns `{kind: 'centaur_team_credential', centaurTeamId, gameId}`. This is structurally distinct from human identities, so no code path is obligated to handle an ambiguous identity kind.
+**Identity resolution** (03-REQ-017). When Convex function code receives a request authenticated by a game credential, `resolveIdentity()` returns `{kind: 'centaur_team_credential', centaurTeamDocId, gameId}`. This is structurally distinct from human identities, so no code path is obligated to handle an ambiguous identity kind.
 
 **Rationale for JWT over alternatives**:
 - *JWT vs opaque token with server-side lookup*: JWT embeds the claims in the token itself, so Convex Auth can validate it without a database lookup on the hot path. Opaque tokens would require a table scan per request.
@@ -330,12 +330,12 @@ When a game transitions from `not-started` to `playing`, Convex orchestrates the
 ```typescript
 interface GameInvitationPayload {
   readonly gameId: string
-  readonly centaurTeamId: string
+  readonly centaurTeamDocId: string
   readonly gameCredentialJwt: string
   readonly spacetimeDbUrl: string
   readonly spacetimeDbModuleName: string
   readonly gameConfig: GameConfig
-  readonly teamRoster: ReadonlyArray<{
+  readonly centaurTeamRoster: ReadonlyArray<{
     readonly email: string
     readonly operatorId: string
   }>
@@ -343,11 +343,11 @@ interface GameInvitationPayload {
 ```
 
 - `gameCredentialJwt`: The per-Centaur-Team game credential JWT (Section 3.15). This is the credential the server uses to authenticate to Convex for the duration of the game.
-- `centaurTeamId`: The Convex `_id` of the Centaur Team receiving this invitation. This value is the `centaurTeamId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`) — the payload field and the `Agent` field are the same string.
+- `centaurTeamDocId`: The Convex `_id` of the Centaur Team receiving this invitation. This value is the `centaurTeamDocId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamDocId}`) — the payload field and the `Agent` field are the same string.
 - `spacetimeDbUrl`: The URL of the provisioned SpacetimeDB instance.
 - `spacetimeDbModuleName`: The module name for connecting to the SpacetimeDB instance.
 - `gameConfig`: The frozen game configuration, so the server can configure its bot framework without querying Convex.
-- `teamRoster`: The roster snapshot for this team, so the server knows which humans are authorized. Each `operatorId` is the Convex `_id` of the user's `users` record (a string), included so the server can correlate roster entries with `Agent` values in game events.
+- `centaurTeamRoster`: The roster snapshot for this team, so the server knows which humans are authorized. Each `operatorId` is the Convex `_id` of the user's `users` record (a string), included so the server can correlate roster entries with `Agent` values in game events.
 
 **No shared secret at nomination** (03-REQ-012). The invitation payload contains the game credential — this is the first time the server receives any secret from the platform for this game. No secret is exchanged during server nomination.
 
@@ -403,7 +403,7 @@ interface SpacetimeDbAccessTokenClaims {
 
 - `iss`: The `CONVEX_SITE_URL` (e.g., `"https://snek-centaur.convex.site"`). Must match the issuer URL configured in SpacetimeDB's OIDC settings.
 - `sub`: A structured subject string encoding the connection's identity kind and binding:
-  - Bot participants: `"centaur:{centaurTeamId}"` (e.g., `"centaur:jh72k4xq5c6m9"`), where `centaurTeamId` is the Convex `_id` of the `centaur_teams` record.
+  - Bot participants: `"centaur:{centaurTeamDocId}"` (e.g., `"centaur:jh72k4xq5c6m9"`), where `centaurTeamDocId` is the Convex `_id` of the `centaur_teams` record.
   - Operator participants: `"operator:{operatorId}"` (e.g., `"operator:k57xqm2n8a3p1"`), where `operatorId` is the Convex `_id` of the `users` record.
   - Spectators: `"spectator:{operatorId}"` (e.g., `"spectator:k57xqm2n8a3p1"`), where `operatorId` is the Convex `_id` of the `users` record.
 - `aud`: The game ID (Convex document `_id` as string). The `client_connected` callback validates this against the game ID stored in the instance's `game_config` table.
@@ -415,24 +415,24 @@ interface SpacetimeDbAccessTokenClaims {
 | Flavor | `sub` prefix | Team binding | Agent derivation |
 |--------|-------------|--------------|-----------------|
 | Operator participant | `"operator:"` | Resolved from roster by operatorId | `{kind: 'operator', operatorId}` |
-| Bot participant | `"centaur:"` | Resolved from roster by centaurTeamId | `{kind: 'centaur_team', centaurTeamId}` |
+| Bot participant | `"centaur:"` | Resolved from roster by centaurTeamDocId | `{kind: 'centaur_team', centaurTeamDocId}` |
 | Spectator | `"spectator:"` | None | N/A (no move staging) |
 
 **Token issuance by Convex**:
 
 - **Operator participant tokens** (03-REQ-024): Issued via a Convex action callable by authenticated humans. Convex verifies: (1) the caller has a valid Google OAuth session, (2) the caller's email is listed in the target game's roster for a participating team, (3) the game has `status === 'playing'`. If all checks pass, Convex constructs the claims with `sub: "operator:{operatorId}"` (where `operatorId` is the caller's `users._id`) and `aud: gameId`, signs with the RS256 private key, and returns the JWT.
-- **Bot participant tokens** (03-REQ-025): Issued via a Convex action callable by game credential holders. Convex verifies: (1) the caller has a valid game credential, (2) the credential's `centaurTeamId` matches a team registered to the target game, (3) the game has `status === 'playing'`. If all checks pass, Convex constructs the claims with `sub: "centaur:{centaurTeamId}"` (where `centaurTeamId` is the `centaur_teams._id`) and `aud: gameId`, signs, and returns.
+- **Bot participant tokens** (03-REQ-025): Issued via a Convex action callable by game credential holders. Convex verifies: (1) the caller has a valid game credential, (2) the credential's `centaurTeamDocId` matches a team registered to the target game, (3) the game has `status === 'playing'`. If all checks pass, Convex constructs the claims with `sub: "centaur:{centaurTeamDocId}"` (where `centaurTeamDocId` is the `centaur_teams._id`) and `aud: gameId`, signs, and returns.
 - **Spectator tokens** (03-REQ-026): Issued via a Convex action callable by authenticated humans. Convex verifies: (1) the caller has a valid Google OAuth session, (2) the game has `status === 'playing'`. Spectator eligibility rules beyond authentication are owned by [08]. The token carries `sub: "spectator:{operatorId}"` (where `operatorId` is the caller's `users._id`).
 
 **Connection validation at SpacetimeDB** (03-REQ-021, 03-REQ-023). SpacetimeDB validates the JWT's RS256 signature against the OIDC-published public key automatically before invoking `client_connected`. The `client_connected` lifecycle callback then performs application-level checks:
 1. Read `ctx.sender_auth().jwt()` to access the validated claims.
 2. Verify `aud` matches this instance's game ID from the `game_config` table (03-REQ-023b). If mismatched, disconnect the client immediately.
 3. Parse `sub` to extract the identity kind and binding (03-REQ-020b).
-4. For `centaur:` and `operator:` prefixes: verify the team binding (by centaurTeamId or operatorId) matches a team in the participating roster (03-REQ-023d).
-5. On success, write the `team_permissions` row associating this connection with its team and derived Agent.
+4. For `centaur:` and `operator:` prefixes: verify the team binding (by centaurTeamDocId or operatorId) matches a team in the participating roster (03-REQ-023d).
+5. On success, write the `centaur_team_permissions` row associating this connection with its team and derived Agent.
 6. On failure at any step, disconnect the client before any application state is touched.
 
-**Connection-time-only validation** (03-REQ-021). Token validation occurs only at connection time. Once a client is connected and `client_connected` has written the `team_permissions` row, the team and role association persists for the lifetime of that connection without further token re-checks. Subsequent expiry of the access token does not cause disconnection of an already-connected client.
+**Connection-time-only validation** (03-REQ-021). Token validation occurs only at connection time. Once a client is connected and `client_connected` has written the `centaur_team_permissions` row, the team and role association persists for the lifetime of that connection without further token re-checks. Subsequent expiry of the access token does not cause disconnection of an already-connected client.
 
 **`initialize_game` must complete before clients connect**. The `client_connected` callback reads the `game_config` table to validate `aud`, so the `initialize_game` reducer must have run and populated `game_config` before any client connections are accepted. This is ensured by the game-start orchestration order in [05]: Convex provisions and initializes the instance before issuing access tokens or sending game invitations.
 
@@ -458,13 +458,13 @@ Satisfies 03-REQ-028, 03-REQ-029, 03-REQ-030, 03-REQ-031, 03-REQ-032, 03-REQ-044
 interface ParticipantAttributionRecord {
   readonly connectionIdentity: Identity
   readonly agent: Agent | null
-  readonly teamId: string | null
+  readonly centaurTeamDocId: string | null
   readonly role: 'operator' | 'bot' | 'spectator'
   readonly registeredAt: number
 }
 ```
 
-- For bot connections (`sub: "centaur:{centaurTeamId}"`): the centaurTeamId (a Convex `_id` string) is validated against the participating roster, then `agent = {kind: 'centaur_team', centaurTeamId: centaurTeamId as CentaurTeamId}`.
+- For bot connections (`sub: "centaur:{centaurTeamDocId}"`): the centaurTeamDocId (a Convex `_id` string) is validated against the participating roster, then `agent = {kind: 'centaur_team', centaurTeamDocId: centaurTeamDocId as CentaurTeamDocId}`.
 - For operator connections (`sub: "operator:{operatorId}"`): `agent = {kind: 'operator', operatorId}` directly from the parsed sub claim, where `operatorId` is the Convex `users._id` string.
 - For spectator connections (`sub: "spectator:{operatorId}"`): no `Agent` value is assigned (spectators do not stage moves).
 
@@ -584,7 +584,7 @@ Satisfies 03-REQ-037, 03-REQ-038, 03-REQ-039, 03-REQ-046, 03-REQ-047, 03-REQ-040
 
 Neither SpacetimeDB nor any Snek Centaur Server issues credentials that any other runtime accepts.
 
-**Team identity consistency across runtimes** (03-REQ-038). Each Centaur Team has a Convex document `_id` which serves as both the team's canonical identifier and the `centaurTeamId` used in `Agent` values within SpacetimeDB. When a SpacetimeDB game instance is seeded, the team roster includes this `_id` as the team identifier. The same string appears in the SpacetimeDB access token `sub` claim (e.g., `"centaur:{centaurTeamId}"`) and in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`). Per [02-REQ-004], SpacetimeDB instances are isolated, so there is no risk of ID collision across games.
+**Team identity consistency across runtimes** (03-REQ-038). Each Centaur Team has a Convex document `_id` which serves as both the team's canonical identifier and the `centaurTeamDocId` used in `Agent` values within SpacetimeDB. When a SpacetimeDB game instance is seeded, the team roster includes this `_id` as the team identifier. The same string appears in the SpacetimeDB access token `sub` claim (e.g., `"centaur:{centaurTeamDocId}"`) and in `Agent` values (`{kind: 'centaur_team', centaurTeamDocId}`). Per [02-REQ-004], SpacetimeDB instances are isolated, so there is no risk of ID collision across games.
 
 **Game-time roster freeze** (03-REQ-039, 03-REQ-046, 03-REQ-047). At game initialization, Convex snapshots the participating teams' rosters (member emails and `operatorId` values, which are Convex `users._id` strings) and provides this snapshot to the SpacetimeDB instance via `initialize_game`. This snapshot is binding for the full duration of the game:
 
@@ -635,12 +635,12 @@ Motivated by 03-REQ-001, 03-REQ-002, 03-REQ-003, 03-REQ-004, 03-REQ-005, 03-REQ-
 ```typescript
 type PlatformIdentity =
   | { readonly kind: 'human'; readonly email: string; readonly operatorId: OperatorId }
-  | { readonly kind: 'centaur_team_credential'; readonly centaurTeamId: string; readonly gameId: string }
+  | { readonly kind: 'centaur_team_credential'; readonly centaurTeamDocId: string; readonly gameId: string }
 
 function resolveIdentity(identity: UserIdentity): PlatformIdentity
 ```
 
-`OperatorId` and `CentaurTeamId` are re-exported from Module 01 (Section 3.1); both are string-based branded types. `UserIdentity` is Convex Auth's identity type returned by `auth.getUserIdentity()`. Note that `centaurTeamId` and `gameId` are exported as `string` (not `Id<'centaur_teams'>` / `Id<'games'>`) because the exported interface is runtime-agnostic — Convex-internal code casts to `Id<T>` at the call site. For `kind: 'centaur_team_credential'`, the `centaurTeamId` claim value is directly usable as `CentaurTeamId` for `Agent` construction.
+`OperatorId` and `CentaurTeamDocId` are re-exported from Module 01 (Section 3.1); both are string-based branded types. `UserIdentity` is Convex Auth's identity type returned by `auth.getUserIdentity()`. Note that `centaurTeamDocId` and `gameId` are exported as `string` (not `Id<'centaur_teams'>` / `Id<'games'>`) because the exported interface is runtime-agnostic — Convex-internal code casts to `Id<T>` at the call site. For `kind: 'centaur_team_credential'`, the `centaurTeamDocId` claim value is directly usable as `CentaurTeamDocId` for `Agent` construction.
 
 Downstream modules use `resolveIdentity()` in every Convex function that needs to distinguish human callers from game-credential-authenticated callers. The discriminant is `kind`.
 
@@ -655,13 +655,13 @@ interface GameCredentialClaims {
   readonly iss: 'snek-centaur-platform'
   readonly aud: 'snek-centaur-platform'
   readonly sub: string
-  readonly centaurTeamId: string
+  readonly centaurTeamDocId: string
   readonly gameId: string
   readonly iat: number
   readonly exp: number
 }
 
-function issueGameCredential(centaurTeamId: string, gameId: string): string
+function issueGameCredential(centaurTeamDocId: string, gameId: string): string
 ```
 
 `issueGameCredential` is a Convex-internal function (not an HTTP endpoint). It constructs and signs the JWT. Called by [05]'s game-start orchestration logic. The `exp` claim is set to `iat + 604800` (7 days) as a defensive upper bound; the effective credential lifetime is bounded to the game's `playing` status per 03-REQ-058 — Convex rejects all requests against non-playing games regardless of JWT validity.
@@ -687,14 +687,14 @@ function issueSpacetimeDbAccessToken(
 ): string
 
 function parseSubClaim(sub: string): 
-  | { readonly kind: 'centaur_team'; readonly centaurTeamId: string }
+  | { readonly kind: 'centaur_team'; readonly centaurTeamDocId: string }
   | { readonly kind: 'operator'; readonly operatorId: OperatorId }
   | { readonly kind: 'spectator'; readonly operatorId: OperatorId }
 ```
 
 `issueSpacetimeDbAccessToken` is a Convex-internal function (action, not query — requires crypto signing). It constructs and RS256-signs the JWT with `iss: CONVEX_SITE_URL`, `aud: gameId`, `sub`, `iat`, and `exp: iat + 7200`. Called by [05]'s access-token-issuance endpoints. No per-game secret parameter is needed — the function reads the RSA private key from the `SPACETIMEDB_SIGNING_KEY` environment variable.
 
-`parseSubClaim` is a pure function that belongs in the shared codebase. It parses the structured `sub` string (e.g., `"centaur:jh72k4xq5c6m9"`, `"operator:k57xqm2n8a3p1"`, `"spectator:k57xqm2n8a3p1"`) into a discriminated union. The `sub` prefix `"centaur:"` maps to `kind: 'centaur_team'` (the prefix is kept short for the wire format while the discriminant uses the full conceptual name). The suffix after the colon is a Convex record `_id` string in all cases — `centaurTeamId` is the `centaur_teams._id`, `operatorId` is the `users._id` cast to `OperatorId`. Used by the `client_connected` callback in [04] to determine the connection's identity kind and team binding.
+`parseSubClaim` is a pure function that belongs in the shared codebase. It parses the structured `sub` string (e.g., `"centaur:jh72k4xq5c6m9"`, `"operator:k57xqm2n8a3p1"`, `"spectator:k57xqm2n8a3p1"`) into a discriminated union. The `sub` prefix `"centaur:"` maps to `kind: 'centaur_team'` (the prefix is kept short for the wire format while the discriminant uses the full conceptual name). The suffix after the colon is a Convex record `_id` string in all cases — `centaurTeamDocId` is the `centaur_teams._id`, `operatorId` is the `users._id` cast to `OperatorId`. Used by the `client_connected` callback in [04] to determine the connection's identity kind and team binding.
 
 **DOWNSTREAM IMPACT**: [04] must call `parseSubClaim()` in the `client_connected` callback to interpret the JWT `sub` claim and derive the connection's team and role. [05] must call `issueSpacetimeDbAccessToken()` in the access-token-issuance endpoints.
 
@@ -705,13 +705,13 @@ Motivated by 03-REQ-044, 03-REQ-045, 03-REQ-032, 04-REQ-020.
 ```typescript
 function deriveAgentFromSubClaim(
   parsed: ReturnType<typeof parseSubClaim>,
-  rosterValidation: (centaurTeamId: string) => boolean
+  rosterValidation: (centaurTeamDocId: string) => boolean
 ): Agent | null
 ```
 
-For `kind === 'centaur_team'`: calls `rosterValidation(parsed.centaurTeamId)` to confirm the team is a registered participant (returns `false` if not found, triggering connection rejection per 04-REQ-022), then returns `{kind: 'centaur_team', centaurTeamId: parsed.centaurTeamId as CentaurTeamId}`. For `kind === 'operator'`: returns `{kind: 'operator', operatorId: parsed.operatorId}`. For `kind === 'spectator'`: returns `null` (no move staging). The `Agent` type is re-exported from Module 01 (Section 3.1).
+For `kind === 'centaur_team'`: calls `rosterValidation(parsed.centaurTeamDocId)` to confirm the team is a registered participant (returns `false` if not found, triggering connection rejection per 04-REQ-022), then returns `{kind: 'centaur_team', centaurTeamDocId: parsed.centaurTeamDocId as CentaurTeamDocId}`. For `kind === 'operator'`: returns `{kind: 'operator', operatorId: parsed.operatorId}`. For `kind === 'spectator'`: returns `null` (no move staging). The `Agent` type is re-exported from Module 01 (Section 3.1).
 
-This function is called by the `client_connected` callback in SpacetimeDB ([04]) to produce the `Agent` value stored in the participant attribution record. The `rosterValidation` callback reads the participating-team roster (seeded by `initialize_game`) to confirm that `centaurTeamId` is a registered participant.
+This function is called by the `client_connected` callback in SpacetimeDB ([04]) to produce the `Agent` value stored in the participant attribution record. The `rosterValidation` callback reads the participating-team roster (seeded by `initialize_game`) to confirm that `centaurTeamDocId` is a registered participant.
 
 **DOWNSTREAM IMPACT**: [04] must call `deriveAgentFromSubClaim()` in `client_connected` and store the result in the participant attribution record. The `Agent` value is then used as `stagedBy` for all moves staged by that connection, with no further resolution needed at serialization time.
 
@@ -751,12 +751,12 @@ Motivated by 03-REQ-050, 03-REQ-051, 03-REQ-053, 03-REQ-054, 03-REQ-055, 03-REQ-
 ```typescript
 interface GameInvitationPayload {
   readonly gameId: string
-  readonly centaurTeamId: string
+  readonly centaurTeamDocId: string
   readonly gameCredentialJwt: string
   readonly spacetimeDbUrl: string
   readonly spacetimeDbModuleName: string
   readonly gameConfig: GameConfig
-  readonly teamRoster: ReadonlyArray<{
+  readonly centaurTeamRoster: ReadonlyArray<{
     readonly email: string
     readonly operatorId: string
   }>
@@ -768,7 +768,7 @@ interface GameInvitationResponse {
 }
 ```
 
-`GameConfig` is re-exported from Module 01 (Section 3.3). `centaurTeamId` is used directly as the `CentaurTeamId` in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`) — it is the Convex `centaur_teams._id` string. `operatorId` in the roster is the Convex `users._id` string.
+`GameConfig` is re-exported from Module 01 (Section 3.3). `centaurTeamDocId` is used directly as the `CentaurTeamDocId` in `Agent` values (`{kind: 'centaur_team', centaurTeamDocId}`) — it is the Convex `centaur_teams._id` string. `operatorId` in the roster is the Convex `users._id` string.
 
 **DOWNSTREAM IMPACT**: [05] must construct `GameInvitationPayload` during game-start orchestration and send it via HTTP POST to each team's `/.well-known/snek-game-invite` endpoint. [08] must implement the `/.well-known/snek-game-invite` endpoint handler that receives this payload and returns a `GameInvitationResponse`.
 
@@ -798,7 +798,7 @@ Exported as an architectural constraint:
 
 ### 4.10 DOWNSTREAM IMPACT Notes
 
-1. **[04] must implement `client_connected` with JWT claim validation.** The `client_connected` lifecycle callback must read `ctx.sender_auth().jwt()`, verify `aud` matches the instance's game ID from `game_config`, parse `sub` via `parseSubClaim()`, validate the team binding against the participating roster, call `deriveAgentFromSubClaim()` to produce the `Agent` value, and write the participant attribution record (`team_permissions` row). On any validation failure, the callback must disconnect the client immediately.
+1. **[04] must implement `client_connected` with JWT claim validation.** The `client_connected` lifecycle callback must read `ctx.sender_auth().jwt()`, verify `aud` matches the instance's game ID from `game_config`, parse `sub` via `parseSubClaim()`, validate the team binding against the participating roster, call `deriveAgentFromSubClaim()` to produce the `Agent` value, and write the participant attribution record (`centaur_team_permissions` row). On any validation failure, the callback must disconnect the client immediately.
 
 2. **[04] must enforce role-based capabilities.** Spectator connections (identified by `sub` prefix `"spectator:"`) must not be allowed to call `stage_move` or `declare_turn_over`. Only `operator` and `centaur` role connections may stage moves, and only for their admitted team's snakes.
 
@@ -810,9 +810,9 @@ Exported as an architectural constraint:
 
 6. **[05] must enforce the roster freeze.** Team roster mutations must be rejected while any game involving the team has `status === 'playing'`. The freeze covers member additions, member removals, and `nominatedServerDomain` changes.
 
-7. **[05] must store the roster snapshot in the game record.** The snapshot includes each team's members (email, `operatorId`) and the team's `centaurTeamId` (its Convex `_id`). This snapshot is the binding authorization state for the game's duration and the historical attribution record after the game ends.
+7. **[05] must store the roster snapshot in the game record.** The snapshot includes each team's members (email, `operatorId`) and the team's `centaurTeamDocId` (its Convex `_id`). This snapshot is the binding authorization state for the game's duration and the historical attribution record after the game ends.
 
-8. **[06] must verify game credential scope.** Centaur subsystem mutations that accept game credentials must verify the credential's `centaurTeamId` matches the team whose state is being modified. This prevents a credential issued for team A from modifying team B's state.
+8. **[06] must verify game credential scope.** Centaur subsystem mutations that accept game credentials must verify the credential's `centaurTeamDocId` matches the team whose state is being modified. This prevents a credential issued for team A from modifying team B's state.
 
 9. **[08] must implement the `/.well-known/snek-game-invite` endpoint.** The Snek Centaur Server must handle incoming invitation POSTs, store the received game credential, and return an accept/reject response. The reference implementation auto-accepts by default.
 
@@ -820,9 +820,9 @@ Exported as an architectural constraint:
 
 Per resolved 03-REVIEW-011, the following naming conventions apply across all modules:
 
-- **`CentaurTeamId`** (not `CentaurId`): The branded type for Centaur Team identifiers. Supersedes the earlier `CentaurId` name. Always refers to a Centaur Team's Convex `centaur_teams._id`.
+- **`CentaurTeamDocId`** (not `CentaurId`): The branded type for Centaur Team identifiers. Supersedes the earlier `CentaurId` name. Always refers to a Centaur Team's Convex `centaur_teams._id`.
 - **`OperatorId`**: The branded type for human operator identifiers. Always refers to a human user's Convex `users._id`.
-- **`Agent` discriminant values**: `kind: 'centaur_team'` (not `kind: 'centaur'`) with field `centaurTeamId`, and `kind: 'operator'` with field `operatorId`.
+- **`Agent` discriminant values**: `kind: 'centaur_team'` (not `kind: 'centaur'`) with field `centaurTeamDocId`, and `kind: 'operator'` with field `operatorId`.
 - **`sub` claim wire format**: The `sub` prefix for bot participants remains `"centaur:"` (short form for the wire protocol); `parseSubClaim` maps this to `kind: 'centaur_team'` internally.
 
 Modules [05]–[09] must use these names consistently. Any references to the old `CentaurId` type or `kind: 'centaur'` discriminant in downstream modules should be treated as stale and updated.
@@ -910,9 +910,9 @@ Modules [05]–[09] must use these names consistently. Any references to the old
 - C: Record a stable human identifier (not email) in `stagedBy`.
 **Informal spec reference**: §14, "Turn Event Schema"; §3 "SpacetimeDB Admission Tickets"; §11 (centaur_action_log).
 
-**Decision**: A, with a refinement that resolves the tension with 02-REQ-030. Within SpacetimeDB's working state, `stagedBy` holds only an opaque SpacetimeDB connection Identity; SpacetimeDB does not read or branch on it. The mapping from Identity back to email (for humans) or Centaur Team reference (for bot participants) lives in the `team_permissions` table, which is populated from admission-ticket contents on each `register` call and retained for the lifetime of the game. Resolution from Identity to email/Centaur Team reference happens at a single boundary: serialization of the game record to Convex at game end.
-**Rationale**: This preserves the letter and spirit of 02-REQ-030 — SpacetimeDB's runtime logic has no concept of "which human" during gameplay; it just records opaque Identities. The act of interpretation is isolated to the moment the game record crosses the boundary into Convex, where email-based attribution is meaningful. Retaining the `team_permissions` mapping across reconnections is necessary because an old `stagedBy` Identity from turn 10 may refer to a connection that was closed and replaced by minute 4, and the game-end serialization still needs to resolve it. Raw Identities must not appear in the persisted game record, so that downstream consumers (replay viewer, action log cross-referencing) have uniform shapes to work against.
-**Affected requirements/design elements**: 03-REQ-032 rewritten to state the opaque-Identity semantics within SpacetimeDB and the no-interpretation constraint. Added 03-REQ-044 (SpacetimeDB maintains the mapping in `team_permissions` for the game's duration, including across reconnections). Added 03-REQ-045 (Convex-side serialization resolves `stagedBy` to email or Centaur Team reference; persisted records contain no raw Identities).
+**Decision**: A, with a refinement that resolves the tension with 02-REQ-030. Within SpacetimeDB's working state, `stagedBy` holds only an opaque SpacetimeDB connection Identity; SpacetimeDB does not read or branch on it. The mapping from Identity back to email (for humans) or Centaur Team reference (for bot participants) lives in the `centaur_team_permissions` table, which is populated from admission-ticket contents on each `register` call and retained for the lifetime of the game. Resolution from Identity to email/Centaur Team reference happens at a single boundary: serialization of the game record to Convex at game end.
+**Rationale**: This preserves the letter and spirit of 02-REQ-030 — SpacetimeDB's runtime logic has no concept of "which human" during gameplay; it just records opaque Identities. The act of interpretation is isolated to the moment the game record crosses the boundary into Convex, where email-based attribution is meaningful. Retaining the `centaur_team_permissions` mapping across reconnections is necessary because an old `stagedBy` Identity from turn 10 may refer to a connection that was closed and replaced by minute 4, and the game-end serialization still needs to resolve it. Raw Identities must not appear in the persisted game record, so that downstream consumers (replay viewer, action log cross-referencing) have uniform shapes to work against.
+**Affected requirements/design elements**: 03-REQ-032 rewritten to state the opaque-Identity semantics within SpacetimeDB and the no-interpretation constraint. Added 03-REQ-044 (SpacetimeDB maintains the mapping in `centaur_team_permissions` for the game's duration, including across reconnections). Added 03-REQ-045 (Convex-side serialization resolves `stagedBy` to email or Centaur Team reference; persisted records contain no raw Identities).
 
 **Superseding amendment (per 04-REVIEW-011 resolution)**: The original decision above — that `stagedBy` holds an opaque Identity within STDB and resolution happens at game-end serialization — has been superseded. The resolution boundary has shifted: the SpacetimeDB connection Identity is now resolved to an `Agent` value (per [01-REVIEW-011]) **at connection time** (in the `client_connected` callback), using JWT `sub` claim contents available at that moment. As a result, `stagedBy` fields stored in STDB already carry `Agent | null`, not opaque Identities, and no serialization-time mapping pass is needed. 03-REQ-032, 03-REQ-044, and 03-REQ-045 have been updated to reflect this shift. The spirit of the original decision is preserved — SpacetimeDB's turn-resolution logic still does not interpret or branch on the attribution value — but the Identity→Agent translation now occurs at the connection boundary rather than the serialization boundary.
 
@@ -922,7 +922,7 @@ Modules [05]–[09] must use these names consistently. Any references to the old
 
 **Type**: Ambiguity
 **Phase**: Requirements
-**Context**: 03-REQ-039 states that game authorization state is snapshot at initialization time and not retroactively changed by later membership edits. The informal spec does not address the case where a human is removed from a team mid-game or added to one during a game. This is a policy question with implications for admission-ticket issuance: if a human is removed from team T at turn 30, does their previously obtained admission ticket still work until expiry, or is the `team_permissions` snapshot in SpacetimeDB the binding source?
+**Context**: 03-REQ-039 states that game authorization state is snapshot at initialization time and not retroactively changed by later membership edits. The informal spec does not address the case where a human is removed from a team mid-game or added to one during a game. This is a policy question with implications for admission-ticket issuance: if a human is removed from team T at turn 30, does their previously obtained admission ticket still work until expiry, or is the `centaur_team_permissions` snapshot in SpacetimeDB the binding source?
 **Question**: Which source of team membership governs mid-game admission:
 - the snapshot seeded into SpacetimeDB at `initialize_game` time, or
 - the live Convex team record at the moment Convex issues an admission ticket, or
@@ -1013,27 +1013,27 @@ Modules [05]–[09] must use these names consistently. Any references to the old
 
 ---
 
-### 03-REVIEW-011: `OperatorId` and `CentaurTeamId` as Convex record `_id`s — **RESOLVED**
+### 03-REVIEW-011: `OperatorId` and `CentaurTeamDocId` as Convex record `_id`s — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Design
-**Context**: Section 3.13 previously specified that each human user is assigned a monotonically increasing `operatorId: OperatorId` (a numeric branded type) allocated via a counter document at user creation time, and that each Centaur Team is assigned a separate `centaurId: CentaurId` (also monotonically increasing integer) allocated at team creation time. Module 01 defined both as `number & { readonly __brand: ... }`. This introduced counter-document serialization points and a redundant identifier field on the `CentaurTeamIdentityFields` interface (since the `centaur_teams._id` already uniquely identified the team). Additionally, the branded type was named `CentaurId` rather than `CentaurTeamId`, creating a discrepancy between the type name and the entity it identifies (a Centaur Team, not a Centaur in isolation).
+**Context**: Section 3.13 previously specified that each human user is assigned a monotonically increasing `operatorId: OperatorId` (a numeric branded type) allocated via a counter document at user creation time, and that each Centaur Team is assigned a separate `centaurId: CentaurId` (also monotonically increasing integer) allocated at team creation time. Module 01 defined both as `number & { readonly __brand: ... }`. This introduced counter-document serialization points and a redundant identifier field on the `CentaurTeamIdentityFields` interface (since the `centaur_teams._id` already uniquely identified the team). Additionally, the branded type was named `CentaurId` rather than `CentaurTeamDocId`, creating a discrepancy between the type name and the entity it identifies (a Centaur Team, not a Centaur in isolation).
 
-**Decision**: Use Convex record `_id`s directly as `OperatorId` and `CentaurTeamId`, and rename the branded type from `CentaurId` to `CentaurTeamId` to match the entity it identifies.
+**Decision**: Use Convex record `_id`s directly as `OperatorId` and `CentaurTeamDocId`, and rename the branded type from `CentaurId` to `CentaurTeamDocId` to match the entity it identifies.
 
 - `OperatorId` is the Convex `users._id` (type `Id<'users'>`), cast to `string & { readonly __brand: 'OperatorId' }`.
-- `CentaurTeamId` is the Convex `centaur_teams._id` (type `Id<'centaur_teams'>`), cast to `string & { readonly __brand: 'CentaurTeamId' }`.
+- `CentaurTeamDocId` is the Convex `centaur_teams._id` (type `Id<'centaur_teams'>`), cast to `string & { readonly __brand: 'CentaurTeamDocId' }`.
 - Both branded types are string-based (not numeric) in Module 01.
 - The counter-document allocation scheme is eliminated entirely.
-- The separate `centaurId` field on `CentaurTeamIdentityFields` is eliminated — `_id` IS the `centaurTeamId`.
-- The `Agent` discriminated union variant is renamed from `kind: 'centaur'` to `kind: 'centaur_team'` with field `centaurTeamId: CentaurTeamId`, reflecting that this agent represents the Centaur Team acting collectively (its bot submitting a move from the Centaur Server, incorporating the team's human and AI heuristics). The `kind: 'operator'` variant retains field `operatorId: OperatorId`, representing an individual human member acting as a sub-agent of their Centaur Team.
+- The separate `centaurId` field on `CentaurTeamIdentityFields` is eliminated — `_id` IS the `centaurTeamDocId`.
+- The `Agent` discriminated union variant is renamed from `kind: 'centaur'` to `kind: 'centaur_team'` with field `centaurTeamDocId: CentaurTeamDocId`, reflecting that this agent represents the Centaur Team acting collectively (its bot submitting a move from the Centaur Server, incorporating the team's human and AI heuristics). The `kind: 'operator'` variant retains field `operatorId: OperatorId`, representing an individual human member acting as a sub-agent of their Centaur Team.
 
-**Rationale**: Counter-document allocation introduces unnecessary write serialization for both user creation and team creation. Convex `_id` values are already globally unique, opaque, and assigned atomically — they satisfy every property that motivated the counter scheme (unique, stable, compact enough for `sub` claim strings). Using `_id` directly eliminates indirection, removes the need for a separate denormalized field, and simplifies downstream code. Renaming `CentaurId` → `CentaurTeamId` eliminates ambiguity: the identifier always refers to a Centaur Team, and the `Agent` variant `kind: 'centaur_team'` makes explicit that the attribution is at the team level (contrasted with `kind: 'operator'`, which attributes at the individual level).
+**Rationale**: Counter-document allocation introduces unnecessary write serialization for both user creation and team creation. Convex `_id` values are already globally unique, opaque, and assigned atomically — they satisfy every property that motivated the counter scheme (unique, stable, compact enough for `sub` claim strings). Using `_id` directly eliminates indirection, removes the need for a separate denormalized field, and simplifies downstream code. Renaming `CentaurId` → `CentaurTeamDocId` eliminates ambiguity: the identifier always refers to a Centaur Team, and the `Agent` variant `kind: 'centaur_team'` makes explicit that the attribution is at the team level (contrasted with `kind: 'operator'`, which attributes at the individual level).
 
 **Affected requirements and design elements**:
-- Module 01 (`specs/01-game-rules.md`): `CentaurId` renamed to `CentaurTeamId`; both branded types changed from `number & {...}` to `string & {...}`; `Agent` variant changed from `{kind: 'centaur', centaurId}` to `{kind: 'centaur_team', centaurTeamId}`. Resolved 01-REVIEW-011 decision text updated.
+- Module 01 (`specs/01-game-rules.md`): `CentaurId` renamed to `CentaurTeamDocId`; both branded types changed from `number & {...}` to `string & {...}`; `Agent` variant changed from `{kind: 'centaur', centaurId}` to `{kind: 'centaur_team', centaurTeamDocId}`. Resolved 01-REVIEW-011 decision text updated.
 - Module 03 (`specs/03-auth-and-identity.md`): Section 3.13 (`HumanIdentityFields`, `CentaurTeamIdentityFields`, `PlatformIdentity`), Section 3.15 (`GameCredentialClaims`, claim descriptions), Section 3.16 (`GameInvitationPayload`, roster description), Section 3.17 (`sub` claim examples, token flavor table), Section 3.18 (Agent derivation prose), Section 3.22 (team identity consistency), Sections 4.1–4.4 and 4.7 (exported type interfaces, `parseSubClaim` and `deriveAgentFromSubClaim` signatures and descriptions) — all updated.
-- Module 02 (`specs/02-platform-architecture.md`): `CentaurId` re-export renamed to `CentaurTeamId` in both re-export lists. Sub-claim examples updated.
-- Module 04 (`specs/04-stdb-engine.md`): `Agent` value descriptions in 04-REQ-020 and 04-REVIEW-011 updated to use `{kind: 'centaur_team', centaurTeamId}`.
+- Module 02 (`specs/02-platform-architecture.md`): `CentaurId` re-export renamed to `CentaurTeamDocId` in both re-export lists. Sub-claim examples updated.
+- Module 04 (`specs/04-stdb-engine.md`): `Agent` value descriptions in 04-REQ-020 and 04-REVIEW-011 updated to use `{kind: 'centaur_team', centaurTeamDocId}`.
 
 **Informal spec reference**: §3, "Identity Model".

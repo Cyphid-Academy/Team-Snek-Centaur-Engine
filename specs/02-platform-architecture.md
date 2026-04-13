@@ -241,11 +241,11 @@ Satisfies 02-REQ-007 through 02-REQ-014.
 
 **Real-time synchronization** (02-REQ-009). SpacetimeDB provides automatic real-time state synchronization to connected clients via subscription queries. When a reducer commits new rows (e.g., new `snake_states` entries after turn resolution), all subscribers whose subscription queries match the new data receive updates without polling. This is a platform-provided capability of SpacetimeDB, not custom application code.
 
-**Invisibility filtering** (02-REQ-010). Row-Level Security (RLS) on the snake state data filters rows where the snake's derived `visible` value (per [01-REQ-023]) is `false` from connections belonging to opponent teams. The RLS rule cross-references the querying connection's team membership (established during registration) against the snake's `teamId`. Same-team connections see all snakes regardless of visibility. The RLS mechanism is owned by [04]; this module specifies the architectural requirement that filtering occurs at the data access layer within SpacetimeDB, not at the application layer in clients. This ensures that even a Snek Centaur Server that bypasses the library cannot observe invisible opponent snakes, satisfying 02-REQ-033's security model.
+**Invisibility filtering** (02-REQ-010). Row-Level Security (RLS) on the snake state data filters rows where the snake's derived `visible` value (per [01-REQ-023]) is `false` from connections belonging to opponent teams. The RLS rule cross-references the querying connection's team membership (established during registration) against the snake's `centaurTeamId`. Same-team connections see all snakes regardless of visibility. The RLS mechanism is owned by [04]; this module specifies the architectural requirement that filtering occurs at the data access layer within SpacetimeDB, not at the application layer in clients. This ensures that even a Snek Centaur Server that bypasses the library cannot observe invisible opponent snakes, satisfying 02-REQ-033's security model.
 
 **Staged moves and last-write-wins** (02-REQ-011, 02-REQ-012). A mutable `staged_moves` table keyed by `snakeId` holds at most one staged move per snake. Any authorized writer (Snek Centaur Server or human operator for the snake's team) can upsert into this table; the most recent write wins. At turn resolution, the `resolve_turn` reducer reads all staged moves, passes them to `resolveTurn()` as `stagedMoves: ReadonlyMap<SnakeId, StagedMove>`, and clears the table — all within the same ACID transaction (02-REQ-008). The `StagedMove.stagedBy` field (from Module 01's exported `Agent` type) is captured before clearing, for inclusion in `snake_moved` turn events (per [01-REQ-052]).
 
-**Append-only game log** (02-REQ-013, 02-REQ-014). The SpacetimeDB schema is organized as an append-only log: turn-keyed tables (`snake_states`, `turn_events`, `item_lifetimes`, `time_budget_states`, `turns`) append new rows each turn without mutating prior rows. Static tables (`game_config`, `board`, `team_permissions`) are written once at initialization. This structure enables any prior turn's board state to be reconstructed directly via a turn-number query, without consulting Convex or any external system. At game end, the complete log is exported to Convex for persistent replay storage (02-REQ-022); no per-turn posting is needed during gameplay. The specific table schemas and query patterns are owned by [04].
+**Append-only game log** (02-REQ-013, 02-REQ-014). The SpacetimeDB schema is organized as an append-only log: turn-keyed tables (`snake_states`, `turn_events`, `item_lifetimes`, `time_budget_states`, `turns`) append new rows each turn without mutating prior rows. Static tables (`game_config`, `board`, `centaur_team_permissions`) are written once at initialization. This structure enables any prior turn's board state to be reconstructed directly via a turn-number query, without consulting Convex or any external system. At game end, the complete log is exported to Convex for persistent replay storage (02-REQ-022); no per-turn posting is needed during gameplay. The specific table schemas and query patterns are owned by [04].
 
 ### 2.14 Convex Platform Runtime Design
 
@@ -273,11 +273,10 @@ type GameStatus = 'not-started' | 'playing' | 'finished'
 
 1. Freezes the game configuration (02-REQ-050).
 2. Generates the board: if the room owner has locked in a board preview, uses that exact board; otherwise, runs `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this Convex mutation; failure produces a structured error surfaced reactively to the room owner, and provisioning does not proceed.
-3. Provisions a fresh SpacetimeDB instance via SpacetimeDB's cloud provisioning API.
-4. Deploys the game engine module to the instance.
-5. Calls the `initialize_game` reducer with the pre-computed initial game state (cell terrain, snake starting positions, initial items), the dynamic gameplay parameters (potion/food spawn rates, hazard damage, timer budgets, turn caps, etc.), and team membership. No per-instance secret is seeded — SpacetimeDB validates client connections via OIDC discovery against the Convex platform's public key. Convex calls the STDB reducer via SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}` with JSON body and bearer token auth) from a Convex HTTP action.
-6. Sends game invitations to each participating Centaur Team's nominated server domain (per [03]).
-7. Upon acceptance by all servers, updates the game record with the instance URL and transitions status to `playing`.
+3. Provisions a fresh SpacetimeDB instance by submitting the pre-compiled WASM module binary (retrieved from Convex file storage) to the self-hosted SpacetimeDB management API (`POST /v1/database` with the WASM binary in the request body), authenticated per [03-REQ-048]. This single operation creates the database and deploys the module.
+4. Calls the `initialize_game` reducer with the pre-computed initial game state (cell terrain, snake starting positions, initial items), the game seed, the dynamic gameplay parameters (potion/food spawn rates, hazard damage, timer budgets, turn caps, etc.), the game-end notification callback URL, and team membership. No per-instance secret is seeded — SpacetimeDB validates client connections via OIDC discovery against the Convex platform's public key. Convex calls the STDB reducer via SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}` with JSON body and bearer token auth) from a Convex HTTP action.
+5. Sends game invitations to each participating Centaur Team's nominated server domain (per [03]).
+6. Upon acceptance by all servers, updates the game record with the instance URL and transitions status to `playing`.
 
 Each game gets its own freshly provisioned instance (02-REQ-020). This applies uniformly to all game-creation paths: first game in a room, successor games, tournament rounds. The provisioning API mechanics and reducer signatures are owned by [04] and [05].
 
@@ -381,7 +380,7 @@ No other extension points exist. The library does not expose hooks for overridin
 
 | Invariant | Enforcement point |
 |-----------|-------------------|
-| Move staging restricted to team's snakes | SpacetimeDB `stage_move` reducer validates team membership via `team_permissions` table |
+| Move staging restricted to team's snakes | SpacetimeDB `stage_move` reducer validates team membership via `centaur_team_permissions` table |
 | Invisible snakes hidden from opponents | SpacetimeDB RLS filters at the data layer |
 | Connection authentication | SpacetimeDB validates RS256-signed JWT via OIDC; `client_connected` checks `aud` and `sub` claims |
 | Selection discipline (≤1 operator per snake) | Convex function contracts in [06] |
@@ -413,6 +412,23 @@ This repository is maintained by the platform team and serves as the canonical s
 
 **Fork-based onboarding.** Teams and server operators obtain the web application by forking the reference implementation repository. Within their fork, they have full source ownership: they may modify, replace, or extend any Svelte component, add pages, change layouts, or restructure the UI as they see fit. The library's data-layer API surface ([08-REQ-076]) is the stable interface between `@snek-centaur/server-lib` and the web app. Correctness invariants are enforced externally by Convex function contracts ([06]) and security enforcement points (02-REQ-033), not by the UI layer.
 
+### 2.16b SpacetimeDB Module WASM Compilation Target
+
+Satisfies 02-REQ-035.
+
+The SpacetimeDB game module ([04]) is authored as TypeScript source within the platform monorepo. It imports the shared engine codebase (`@snek-centaur/engine`) for domain types and `resolveTurn()`, and uses SpacetimeDB's TypeScript module SDK for table definitions, reducer declarations, and lifecycle callbacks.
+
+**WASM compilation.** The module is compiled to a WebAssembly binary using SpacetimeDB's build toolchain (e.g., `spacetime build`). The WASM binary encapsulates the complete game engine module: all table schemas, all reducers, all lifecycle callbacks, and the embedded shared engine codebase. The resulting binary is the sole deployment artifact for game instance provisioning — there is no separate "deploy module" step after instance creation.
+
+**Build pipeline.** The platform build pipeline (used in both development and production) performs the following steps:
+
+1. Compiles the SpacetimeDB TypeScript module source to a WASM binary using SpacetimeDB's build toolchain.
+2. Uploads the resulting WASM binary to the target Convex deployment's file storage, making it available for game provisioning by [05].
+
+In development, the target Convex instance corresponds to the current development branch's deployment. In production, it corresponds to the production Convex deployment. The upload uses a Convex HTTP action or internal mutation authenticated as the platform build system.
+
+The WASM binary is versioned implicitly by the build pipeline — each build produces a new binary that replaces the previous one in Convex file storage. At game-creation time, [05] retrieves the current binary from file storage and includes it in the single-step `POST /v1/database` provisioning request (§2.14 step 3).
+
 ### 2.17 Shared Engine Codebase Design
 
 Satisfies 02-REQ-034 through 02-REQ-037.
@@ -422,9 +438,9 @@ Satisfies 02-REQ-034 through 02-REQ-037.
 ```typescript
 export {
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurTeamId, OperatorId,
+  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, CentaurTeamDocId, OperatorId,
   Agent, BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
-  PotionEffect, SnakeState, ItemState, Board, TeamClockState,
+  PotionEffect, SnakeState, ItemState, Board, CentaurTeamClockState,
   GameConfig, GameOutcome, TurnEvent, DeathCause,
   BoardGenerationFailure, StagedMove, Rng, rngFromSeed, subSeed,
   generateBoardAndInitialState, resolveTurn,
@@ -459,7 +475,7 @@ Operator Browser
 ├── WebSocket → SpacetimeDB instance
 │   ├── Subscribe: game state (filtered by RLS)
 │   ├── Call: stage_move(snakeId, direction)
-│   └── Call: declare_turn_over(teamId)
+│   └── Call: declare_turn_over(centaurTeamId)
 │
 └── Convex client → Convex deployment
     ├── Subscribe: Centaur subsystem state (selection, drives, bot params, heuristics)
@@ -579,6 +595,7 @@ export interface SpacetimeDbInstanceLifecycle {
   readonly provision: {
     readonly trigger: 'game-launch'
     readonly freshPerGame: true
+    readonly wasmModuleBinary: 'pre-compiled WASM binary retrieved from Convex file storage'
     readonly inputFromConvex: {
       readonly preComputedInitialState: {
         readonly board: Board
@@ -586,8 +603,10 @@ export interface SpacetimeDbInstanceLifecycle {
         readonly items: ReadonlyArray<ItemState>
       }
       readonly dynamicGameplayParams: DynamicGameplayParams
-      readonly teamMembership: ReadonlyArray<TeamMembershipRecord>
+      readonly centaurTeamMembership: ReadonlyArray<CentaurTeamMembershipRecord>
       readonly gameId: string
+      readonly gameSeed: Uint8Array
+      readonly gameEndCallbackUrl: string
     }
   }
   readonly teardown: {
@@ -596,15 +615,15 @@ export interface SpacetimeDbInstanceLifecycle {
   }
 }
 
-export interface TeamMembershipRecord {
-  readonly teamId: TeamId
+export interface CentaurTeamMembershipRecord {
+  readonly centaurTeamId: CentaurTeamId
   readonly members: ReadonlyArray<{ readonly identity: string; readonly role: 'human' | 'bot' }>
 }
 ```
 
-`Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps — as opposed to board generation parameters. `TeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase; STDB does not call that function.
+`Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps — as opposed to board generation parameters. `CentaurTeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase; STDB does not call that function.
 
-**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters — not the full `GameConfig` and not a game seed for generation. [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
+**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters, game seed, and game-end callback URL — not the full `GameConfig` and not a game seed for generation purposes (the seed is forwarded for turn-resolution randomness and replay export, not for board generation). [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, retrieving the pre-compiled WASM binary from Convex file storage and including it in the `POST /v1/database` provisioning request, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [05] must store the current WASM module binary in Convex file storage, uploaded by the platform build pipeline at build/deploy time. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
 
 ### 3.5 Shared Engine Codebase Contract
 
@@ -616,11 +635,11 @@ The shared engine codebase re-exports all of Module 01's exported interfaces (Se
 export {
   // Enums and branded types (01 §3.1)
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurTeamId, OperatorId, Agent,
+  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, CentaurTeamDocId, OperatorId, Agent,
   BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
 
   // State shapes (01 §3.2)
-  PotionEffect, SnakeState, ItemState, Board, TeamClockState,
+  PotionEffect, SnakeState, ItemState, Board, CentaurTeamClockState,
 
   // Game configuration (01 §3.3)
   GameConfig,
@@ -681,7 +700,7 @@ export interface SecurityEnforcementModel {
   readonly moveStagingAuthorization: {
     readonly enforcedBy: 'SpacetimeDB stage_move reducer'
     readonly scope: 'team-level (any team member can stage for any team snake)'
-    readonly mechanism: 'team_permissions table lookup against connection Identity'
+    readonly mechanism: 'centaur_team_permissions table lookup against connection Identity'
   }
   readonly invisibilityFiltering: {
     readonly enforcedBy: 'SpacetimeDB RLS'
@@ -738,7 +757,7 @@ export interface SpectatorConnectionModel {
 export interface SnekCentaurServerConnectionModel {
   readonly spacetimeDb: {
     readonly transport: 'WebSocket (one per hosted Centaur Team)'
-    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: centaur:{centaurTeamId})'
+    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: centaur:{centaurTeamDocId})'
     readonly capabilities: readonly ['subscribe_game_state', 'stage_move', 'declare_turn_over']
   }
   readonly convex: {
@@ -799,16 +818,16 @@ Motivated by 02-REQ-058, 02-REQ-059, 02-REQ-043, 02-REQ-064 through 02-REQ-067.
 ```typescript
 export interface UnifiedWebApplicationScope {
   readonly platformPages: readonly [
-    'home_navigation', 'team_management', 'server_nomination',
+    'home_navigation', 'centaur_team_management', 'server_nomination',
     'member_management', 'timekeeper_assignment', 'room_browsing', 'room_creation',
     'room_lobby', 'game_configuration', 'live_spectating', 'unified_replay_viewer',
-    'player_profiles', 'team_profiles', 'leaderboards'
+    'player_profiles', 'centaur_team_profiles', 'leaderboards'
   ]
-  readonly teamInternalPages: readonly [
+  readonly centaurTeamInternalPages: readonly [
     'heuristic_configuration', 'bot_parameter_configuration',
     'live_operator_interface', 'game_history'
   ]
-  readonly teamManagementExcludes: readonly [
+  readonly centaurTeamManagementExcludes: readonly [
     'bot_parameters', 'heuristic_configuration', 'drive_management'
   ]
   readonly replayUnification: {
@@ -819,7 +838,7 @@ export interface UnifiedWebApplicationScope {
 }
 ```
 
-**DOWNSTREAM IMPACT**: [08] must implement the unified web application covering both platform-level and team-internal pages. The `team_management` page must not expose bot parameters, heuristic configuration, or Drive management. The replay viewer must implement privacy gating and admin override for within-turn action access.
+**DOWNSTREAM IMPACT**: [08] must implement the unified web application covering both platform-level and team-internal pages. The `centaur_team_management` page must not expose bot parameters, heuristic configuration, or Drive management. The replay viewer must implement privacy gating and admin override for within-turn action access.
 
 ### 3.11 DOWNSTREAM IMPACT Notes
 

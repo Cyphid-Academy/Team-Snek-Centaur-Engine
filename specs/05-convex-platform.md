@@ -117,11 +117,10 @@
 
 1. Freeze the game configuration ([05-REQ-024]).
 2. Obtain the initial game state: if the room owner has locked in a board preview ([05-REQ-032b]), use that exact pre-computed board state; otherwise, run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this mutation; if all attempts fail, the mutation produces a structured `BoardGenerationFailure` error that is surfaced reactively to the room owner (see [05-REQ-032c]), and the orchestration does not proceed.
-3. Provision a fresh SpacetimeDB game instance per [02-REQ-003] and [02-REQ-020].
-4. Deploy the shared engine codebase ([02-REQ-035]) into that instance.
-5. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's connection authorization state per [03-REQ-039], and the game's unique identifier (for `aud` claim validation in `client_connected`). No per-instance signing secret is passed — client authentication uses OIDC-based JWT validation against the platform's public key (see [03] §3.17). Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
-6. Send game invitations to each participating Centaur Team's nominated server domain (per [03]).
-7. Upon acceptance by all servers, update the game record with the instance URL and transition the game's status to `playing`.
+3. Retrieve the pre-compiled WASM module binary from Convex file storage ([05-REQ-073]) and provision a fresh SpacetimeDB game instance by submitting the binary to the self-hosted SpacetimeDB management API (`POST /v1/database` with the WASM binary in the request body), authenticated per [03-REQ-048]. This single operation creates the database and deploys the game engine module.
+4. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the game seed (the root seed used by `generateBoardAndInitialState()`, forwarded for turn-resolution randomness and replay export per [04]), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the game-end notification callback URL (a Convex HTTP action endpoint for receiving game-end notifications per [04-REQ-061a]), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's connection authorization state per [03-REQ-039], and the game's unique identifier (for `aud` claim validation in `client_connected`). No per-instance signing secret is passed — client authentication uses OIDC-based JWT validation against the platform's public key (see [03] §3.17). Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
+5. Send game invitations to each participating Centaur Team's nominated server domain (per [03]).
+6. Upon acceptance by all servers, update the game record with the instance URL and transition the game's status to `playing`.
 
 Successful completion of this sequence shall transition the game's status to `playing`.
 
@@ -254,6 +253,12 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 ---
 
+### 5.14 WASM Module Binary Storage
+
+**05-REQ-073**: Convex shall store the current SpacetimeDB game module binary (a pre-compiled WebAssembly artifact) in Convex file storage. The binary shall be uploaded by the platform build pipeline at build or deploy time, targeting the Convex deployment instance appropriate for the current development or production environment. At game-creation time per [05-REQ-032], Convex shall retrieve the stored binary for inclusion in the SpacetimeDB provisioning request. The binary represents the compiled form of the SpacetimeDB game module defined by [04], which imports the shared engine codebase ([02-REQ-035]).
+
+---
+
 ## REVIEW Items
 
 ### 05-REVIEW-001: Convex retention of admission-ticket validation secret — **RESOLVED (obsolete)**
@@ -326,7 +331,7 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-038 and 05-REQ-055 refer to "final scores" as the terminal state of a game, and the informal spec §11 shapes it as `{teamId: number}`. But [01] does not yet define what a "score" is in the game rules — [01]'s win condition language is "last team standing" or "max turns reached", neither of which obviously produces a numeric score per team. The shape is carried over from the informal spec without a corresponding requirement in Module 01.
+**Context**: 05-REQ-038 and 05-REQ-055 refer to "final scores" as the terminal state of a game, and the informal spec §11 shapes it as `{centaurTeamId: number}`. But [01] does not yet define what a "score" is in the game rules — [01]'s win condition language is "last team standing" or "max turns reached", neither of which obviously produces a numeric score per team. The shape is carried over from the informal spec without a corresponding requirement in Module 01.
 **Question**: Is a numeric per-team score a domain concept owned by [01], or a derived value computed at game end? If derived, by which runtime (SpacetimeDB or Convex) and by what formula?
 **Options**:
 - A: Score is a domain concept that [01] should define (e.g., sum of surviving snake lengths, or win-status indicator). Flag as upstream gap for Module 01.

@@ -20,7 +20,7 @@
 **01-REQ-004**: The system shall define a `SnakeState` type with the following fields:
 - `snakeId`: unique identifier
 - `letter`: single alphabetic character assigned at game start
-- `teamId`: owning team
+- `centaurTeamId`: owning CentaurTeam
 - `body`: ordered list of cell positions, head first, tail last; length = number of segments
 - `health`: integer
 - `activeEffects`: collection of active potion effects, each with shape `{ family, state, expiryTurn }` where `family ∈ {invulnerability, invisibility}` and `state ∈ {buff, debuff}`. A snake holds at most one active effect per family (see 01-REQ-028).
@@ -74,7 +74,7 @@ The mechanism for deriving per-attempt sub-seeds from the game seed is a design-
 
 ### 1.3 Snake Initialization
 
-**01-REQ-018**: Each snake shall be assigned a unique letter designation within its team, assigned consecutively starting from `A`. A snake's display name is `{teamName}.{letter}` (e.g., `Red.A`).
+**01-REQ-018**: Each snake shall be assigned a unique letter designation within its team, assigned consecutively starting from `A`. A snake's display name is `{centaurTeamName}.{letter}` (e.g., `Red.A`).
 
 **01-REQ-019**: The number of snakes each team fields per game shall be equal across all teams and is determined by the configured `snakesPerTeam` parameter (1–10).
 
@@ -262,10 +262,10 @@ export type EffectState  = 'buff' | 'debuff'
 // Coordinate convention: (0,0) is the top-left wall cell. x is column, y is row.
 export interface Cell { readonly x: number; readonly y: number }
 
-// Branded ID types so that SnakeId, TeamId, ItemId, and TurnNumber cannot be
+// Branded ID types so that SnakeId, CentaurTeamId, ItemId, and TurnNumber cannot be
 // accidentally mixed at call sites.
 export type SnakeId    = number & { readonly __brand: 'SnakeId' }
-export type TeamId     = number & { readonly __brand: 'TeamId' }
+export type CentaurTeamId     = number & { readonly __brand: 'CentaurTeamId' }
 export type ItemId     = number & { readonly __brand: 'ItemId' }
 export type TurnNumber = number & { readonly __brand: 'TurnNumber' }
 
@@ -286,7 +286,7 @@ export interface PotionEffect {
 export interface SnakeState {
   readonly snakeId: SnakeId
   readonly letter: string             // single alphabetic char, 'A' + index within team
-  readonly teamId: TeamId
+  readonly centaurTeamId: CentaurTeamId
   readonly body: ReadonlyArray<Cell>  // head at index 0, tail at last index
   readonly health: number
   readonly activeEffects:  ReadonlyArray<PotionEffect>   // ≤1 per family (01-REQ-028)
@@ -444,7 +444,7 @@ export interface BoardGenerationFailure {
   readonly code: 'HAZARD_CONNECTIVITY' | 'TERRITORY_PARITY_SHORTAGE' | 'INITIAL_FOOD_SHORTAGE'
   readonly attemptsUsed: 4
   readonly details: {
-    readonly teamId?: TeamId
+    readonly centaurTeamId?: CentaurTeamId
     readonly innerCellCount: number
     readonly eligibleCellCount?: number
   }
@@ -487,7 +487,7 @@ Implements 01-REQ-013. Given clustering `C ∈ [1, 20]` and density `D ∈ [1, 9
 
 Implements 01-REQ-018 through 01-REQ-021.
 
-1. For each team in team-registration order, assign letters consecutively starting at `'A'`. Display name is `${teamName}.${letter}` (01-REQ-018).
+1. For each team in team-registration order, assign letters consecutively starting at `'A'`. Display name is `${centaurTeamName}.${letter}` (01-REQ-018).
 2. Assign the starting cells produced by Section 2.4 Stage 5 to the team's snakes in an order determined by a per-team Fisher–Yates shuffle drawn from the same `"starting-positions"` sub-seed.
 3. For each snake:
    - `body = [startCell, startCell, startCell]` (length 3 with all segments stacked, per 01-REQ-020).
@@ -683,18 +683,18 @@ function resolveTurn(state, T, turnSeed):
   # triples for this turn, then schedule a single team rebuild per triple.
   # This collapses simultaneous multi-collection into one coherent rebuild
   # rather than producing multiple overlapping pending entries.
-  collectorsByTeamFamily = {}  # (teamId, family) → set(snakeId)
+  collectorsByCentaurTeamFamily = {}  # (centaurTeamId, family) → set(snakeId)
   for snake in aliveSnakes(state):
     potionAt = findPotionAt(state, snake.body[0])
     if potionAt == null: continue
     consumePotion(state, potionAt)
     family = (potionAt.itemType === InvulnPotion) ? 'invulnerability' : 'invisibility'
-    key = (snake.teamId, family)
-    collectorsByTeamFamily.setdefault(key, set()).add(snake.snakeId)
+    key = (snake.centaurTeamId, family)
+    collectorsByCentaurTeamFamily.setdefault(key, set()).add(snake.snakeId)
 
-  for (teamId, family), collectorIds in collectorsByTeamFamily.items():
+  for (centaurTeamId, family), collectorIds in collectorsByCentaurTeamFamily.items():
     expiry = T + 3
-    for mate in aliveMembersOf(state, teamId):
+    for mate in aliveMembersOf(state, centaurTeamId):
       state_ = (mate.snakeId in collectorIds) ? 'debuff' : 'buff'
       # Replace any existing pending entry of this family on `mate` (from a
       # prior collection earlier in the same Phase 6 iteration, though this
@@ -725,14 +725,14 @@ function resolveTurn(state, T, turnSeed):
   # 9a runs *before* 9b/9c mutate it.
 
   # 9a. Team-wide, family-scoped cancellation for every disrupted debuff-holder.
-  cancelledByTeamFamily = set()  # (teamId, family) pairs
+  cancelledByCentaurTeamFamily = set()  # (centaurTeamId, family) pairs
   for d in disruptions:
     snake = state.snakeById(d.snakeId)
     for e in snake.activeEffects:
       if e.state === 'debuff':
-        cancelledByTeamFamily.add((snake.teamId, e.family))
-  for (teamId, family) in cancelledByTeamFamily:
-    for mate in aliveMembersOf(state, teamId):
+        cancelledByCentaurTeamFamily.add((snake.centaurTeamId, e.family))
+  for (centaurTeamId, family) in cancelledByCentaurTeamFamily:
+    for mate in aliveMembersOf(state, centaurTeamId):
       removeActiveOfFamily(mate,  family)
       removePendingOfFamily(mate, family)
     # (Dead team members' remaining effects are irrelevant going forward; the
@@ -784,8 +784,8 @@ function resolveTurn(state, T, turnSeed):
 Implements 01-REQ-034 through 01-REQ-040. Per-team clock state:
 
 ```typescript
-export interface TeamClockState {
-  readonly teamId: TeamId
+export interface CentaurTeamClockState {
+  readonly centaurTeamId: CentaurTeamId
   readonly budgetMs: number          // persistent across turns (01-REQ-034, 01-REQ-035)
   readonly perTurnMs: number         // current turn only (01-REQ-037)
   readonly declaredTurnOver: boolean
@@ -833,7 +833,7 @@ if aliveTeams.length === 0:
     return winnerOrDraw(previousTurnScores)
 
 if aliveTeams.length === 1:
-  return { kind: 'victory', winnerTeamId: aliveTeams[0], scores }  # 01-REQ-054
+  return { kind: 'victory', winnerCentaurTeamId: aliveTeams[0], scores }  # 01-REQ-054
 
 if config.maxTurns > 0 and T === config.maxTurns - 1:
   return winnerOrDraw(scores)                                      # 01-REQ-057
@@ -841,7 +841,7 @@ if config.maxTurns > 0 and T === config.maxTurns - 1:
 return { kind: 'in_progress' }                                     # 01-REQ-058 (no limit)
 ```
 
-Where `winnerOrDraw(scoreMap)` returns `{kind: 'victory', ...}` if there is a unique maximum, else `{kind: 'draw', tiedTeamIds: [...]}`.
+Where `winnerOrDraw(scoreMap)` returns `{kind: 'victory', ...}` if there is a unique maximum, else `{kind: 'draw', tiedCentaurTeamIds: [...]}`.
 
 **Previous-turn scores**: before Phase 1 of every turn, the engine snapshots the current team scores (computed from alive snakes at start-of-turn, which equals end-of-previous-turn) into `previousTurnScores` for use by the simultaneous-elimination branch. Module 01 specifies the arithmetic; the storage location is a module-04 concern.
 
@@ -866,7 +866,7 @@ export type TurnEvent =
       // null when no move was staged this turn — i.e. Phase 1 fell through
       // to `lastDirection` or, on turn 0, to the deterministic random pick.
       // Team attribution is not carried on the event because it is derivable
-      // from `snakeId` via `SnakeState.teamId`.
+      // from `snakeId` via `SnakeState.centaurTeamId`.
       readonly stagedBy: Agent | null
     }
   | {
@@ -950,22 +950,22 @@ export type EffectState  = 'buff' | 'debuff'
 export interface Cell { readonly x: number; readonly y: number }
 
 export type SnakeId    = number & { readonly __brand: 'SnakeId' }
-export type TeamId     = number & { readonly __brand: 'TeamId' }
+export type CentaurTeamId     = number & { readonly __brand: 'CentaurTeamId' }
 export type ItemId     = number & { readonly __brand: 'ItemId' }
 export type TurnNumber = number & { readonly __brand: 'TurnNumber' }
-export type CentaurTeamId = string & { readonly __brand: 'CentaurTeamId' }
+export type CentaurTeamDocId = string & { readonly __brand: 'CentaurTeamDocId' }
 export type OperatorId    = string & { readonly __brand: 'OperatorId' }
 
 // Agent: the actor that staged a move. Module 01 distinguishes two kinds —
 // CentaurTeam (a Centaur Team's bot acting on the team's collective behalf,
 // incorporating human and AI heuristics) and Operator (an individual human
 // member of a Centaur Team, identified via Google OAuth).
-// The `CentaurTeamId` and `OperatorId` id spaces are disjoint and opaque to
+// The `CentaurTeamDocId` and `OperatorId` id spaces are disjoint and opaque to
 // module 01; the mapping from a concrete deployment identity (e.g. module
 // 04's SpacetimeDB `Identity`) to an `Agent` is owned by the downstream
 // module that has visibility into that identity namespace.
 export type Agent =
-  | { readonly kind: 'centaur_team'; readonly centaurTeamId: CentaurTeamId }
+  | { readonly kind: 'centaur_team'; readonly centaurTeamDocId: CentaurTeamDocId }
   | { readonly kind: 'operator';    readonly operatorId: OperatorId }
 
 export const BOARD_DIMENSIONS: Readonly<Record<BoardSize, { total: number; playable: number }>>
@@ -992,7 +992,7 @@ export interface PotionEffect {
 export interface SnakeState {
   readonly snakeId: SnakeId
   readonly letter: string
-  readonly teamId: TeamId
+  readonly centaurTeamId: CentaurTeamId
   readonly body: ReadonlyArray<Cell>
   readonly health: number
   readonly activeEffects:  ReadonlyArray<PotionEffect>   // ≤1 per family
@@ -1018,8 +1018,8 @@ export interface Board {
   readonly cells: ReadonlyArray<CellType>
 }
 
-export interface TeamClockState {
-  readonly teamId: TeamId
+export interface CentaurTeamClockState {
+  readonly centaurTeamId: CentaurTeamId
   readonly budgetMs: number
   readonly perTurnMs: number
   readonly declaredTurnOver: boolean
@@ -1072,13 +1072,13 @@ export type GameOutcome =
   | { readonly kind: 'in_progress' }
   | {
       readonly kind: 'victory'
-      readonly winnerTeamId: TeamId
-      readonly scores: ReadonlyMap<TeamId, number>
+      readonly winnerCentaurTeamId: CentaurTeamId
+      readonly scores: ReadonlyMap<CentaurTeamId, number>
     }
   | {
       readonly kind: 'draw'
-      readonly tiedTeamIds: ReadonlyArray<TeamId>
-      readonly scores: ReadonlyMap<TeamId, number>
+      readonly tiedCentaurTeamIds: ReadonlyArray<CentaurTeamId>
+      readonly scores: ReadonlyMap<CentaurTeamId, number>
     }
 ```
 
@@ -1095,7 +1095,7 @@ export interface BoardGenerationFailure {
   readonly code: 'HAZARD_CONNECTIVITY' | 'TERRITORY_PARITY_SHORTAGE' | 'INITIAL_FOOD_SHORTAGE'
   readonly attemptsUsed: 4
   readonly details: {
-    readonly teamId?: TeamId
+    readonly centaurTeamId?: CentaurTeamId
     readonly innerCellCount: number
     readonly eligibleCellCount?: number
   }
@@ -1126,7 +1126,7 @@ Motivated by 01-REQ-010–017 + 01-REQ-061 (board gen) and 01-REQ-041–052 + 01
 ```typescript
 export function generateBoardAndInitialState(
   config: GameConfig,
-  teams: ReadonlyArray<{ readonly teamId: TeamId; readonly name: string }>,
+  teams: ReadonlyArray<{ readonly centaurTeamId: CentaurTeamId; readonly name: string }>,
   gameSeed: Uint8Array,
 ): { readonly board: Board; readonly snakes: ReadonlyArray<SnakeState>;
      readonly items: ReadonlyArray<ItemState> }
@@ -1151,7 +1151,7 @@ export function resolveTurn(
 
 ```
 
-`GameState` aggregates `Board`, `ReadonlyArray<SnakeState>`, `ReadonlyArray<ItemState>`, and `ReadonlyArray<TeamClockState>`. Its internal aggregate shape is *not* exported — consumers interact with the components. If a future requirement shows that a module needs the aggregate, it should be added to this section then. See new **01-REVIEW-013**.
+`GameState` aggregates `Board`, `ReadonlyArray<SnakeState>`, `ReadonlyArray<ItemState>`, and `ReadonlyArray<CentaurTeamClockState>`. Its internal aggregate shape is *not* exported — consumers interact with the components. If a future requirement shows that a module needs the aggregate, it should be added to this section then. See new **01-REVIEW-013**.
 
 ### 3.9 Invariants and Constants
 
@@ -1414,19 +1414,19 @@ The rename from "interaction" to "disruption" reflects the narrower class: viole
 
 **Type**: Contradiction
 **Phase**: Design
-**Context**: Informal spec §14 defines `snake_moved: {snakeId, from, to, direction, grew: bool, stagedBy: Identity}` where `Identity` is the cross-module identity type (module-03 concept covering human users, Centaur Servers, and game participants). Module 01 must not reference module-03 types (Rule 2: 01 has no dependencies). This design uses `stagedByTeamId: TeamId | null` instead, on the reasoning that (a) module 01 can't reference `Identity`, and (b) what downstream animation/replay actually needs is team attribution (to display "Red.C moved by Red team's bot"), not the full human-or-server identity chain.
+**Context**: Informal spec §14 defines `snake_moved: {snakeId, from, to, direction, grew: bool, stagedBy: Identity}` where `Identity` is the cross-module identity type (module-03 concept covering human users, Centaur Servers, and game participants). Module 01 must not reference module-03 types (Rule 2: 01 has no dependencies). This design uses `stagedByCentaurTeamId: CentaurTeamId | null` instead, on the reasoning that (a) module 01 can't reference `Identity`, and (b) what downstream animation/replay actually needs is team attribution (to display "Red.C moved by Red team's bot"), not the full human-or-server identity chain.
 **Question**: Is team-level attribution sufficient for `snake_moved`, or does a downstream consumer (likely module 08's team replay viewer, per informal spec §13.3) need the full `Identity` for features like "show which operator staged this move"?
 **Options**:
-- A: Keep `stagedByTeamId: TeamId | null` in module 01. If module 08 needs operator-level attribution, it reconstructs it from the Centaur action log (module 06) joined on turn/snake — which is the mechanism the informal spec already describes for sub-turn replay.
+- A: Keep `stagedByCentaurTeamId: CentaurTeamId | null` in module 01. If module 08 needs operator-level attribution, it reconstructs it from the Centaur action log (module 06) joined on turn/snake — which is the mechanism the informal spec already describes for sub-turn replay.
 - B: Define a second event schema layer in module 04 that wraps module 01's `TurnEvent` and enriches `snake_moved` with a module-03 `Identity`. Module 01's schema stays identity-free.
 - C: Move `TurnEvent` ownership out of module 01 entirely and into module 04. Module 01 would only enumerate the *names* of event types in 01-REQ-052; the schemas would live where `Identity` is reachable.
 **Informal spec reference**: §14, §13.3.
 
-**Decision**: None of A/B/C as originally posed — a new option (D) was introduced and chosen. Module 01 defines a local `Agent` concept that abstracts over the two kinds of actor that can stage a move in this project: a **Centaur Team** (a Centaur Team's bot acting on the team's collective behalf, incorporating human and AI heuristics) and an **Operator** (an individual human member of a Centaur Team, identified via Google OAuth). These represent different granularities of agency attribution: a Centaur Team-level move is the product of the team's collective intelligence pipeline, while an operator-level move is uniquely attributed to that individual sub-agent of the team. `Agent` is a discriminated union over `{kind: 'centaur_team', centaurTeamId: CentaurTeamId}` and `{kind: 'operator', operatorId: OperatorId}`, with `CentaurTeamId` and `OperatorId` as opaque branded types owned by module 01. Both are string-based: `CentaurTeamId = string & { readonly __brand: 'CentaurTeamId' }` and `OperatorId = string & { readonly __brand: 'OperatorId' }`, reflecting that the concrete values are Convex record `_id`s (see resolved 03-REVIEW-011). The `snake_moved` event carries `stagedBy: Agent | null` (null only when Phase 1 fell through to `lastDirection` or the turn-0 random pick). `resolveTurn`'s `stagedMoves` input is correspondingly retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>` where `StagedMove = {direction, stagedBy}`. Downstream modules that see a concrete identity type (module 04's SpacetimeDB `Identity`, in particular) are responsible for mapping that identity onto an `Agent` variant before calling `resolveTurn` — module 01 never interprets the ids, it just threads them through into the event.
+**Decision**: None of A/B/C as originally posed — a new option (D) was introduced and chosen. Module 01 defines a local `Agent` concept that abstracts over the two kinds of actor that can stage a move in this project: a **Centaur Team** (a Centaur Team's bot acting on the team's collective behalf, incorporating human and AI heuristics) and an **Operator** (an individual human member of a Centaur Team, identified via Google OAuth). These represent different granularities of agency attribution: a Centaur Team-level move is the product of the team's collective intelligence pipeline, while an operator-level move is uniquely attributed to that individual sub-agent of the team. `Agent` is a discriminated union over `{kind: 'centaur_team', centaurTeamDocId: CentaurTeamDocId}` and `{kind: 'operator', operatorId: OperatorId}`, with `CentaurTeamDocId` and `OperatorId` as opaque branded types owned by module 01. Both are string-based: `CentaurTeamDocId = string & { readonly __brand: 'CentaurTeamDocId' }` and `OperatorId = string & { readonly __brand: 'OperatorId' }`, reflecting that the concrete values are Convex record `_id`s (see resolved 03-REVIEW-011). The `snake_moved` event carries `stagedBy: Agent | null` (null only when Phase 1 fell through to `lastDirection` or the turn-0 random pick). `resolveTurn`'s `stagedMoves` input is correspondingly retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>` where `StagedMove = {direction, stagedBy}`. Downstream modules that see a concrete identity type (module 04's SpacetimeDB `Identity`, in particular) are responsible for mapping that identity onto an `Agent` variant before calling `resolveTurn` — module 01 never interprets the ids, it just threads them through into the event.
 
 **Rationale for rejecting the originally-posed options**:
 
-- Option A (keep `stagedByTeamId`) was doubly wrong. First, it is *redundant*: `SnakeState.teamId` already maps `snakeId → teamId`, so given any `snake_moved.snakeId` the team is derivable by lookup and needn't be carried on the event. The only non-redundant bit in the original encoding was "was any move staged at all vs. engine fallback", which the `null` sentinel bundled in as a side effect rather than as a deliberate design choice. Second, it does not satisfy 01-REQ-052, which was written post-hoc and explicitly lists "identity of who staged the move" as part of the closed event set. Team identity is not the same concept as operator/centaur identity.
+- Option A (keep `stagedByCentaurTeamId`) was doubly wrong. First, it is *redundant*: `SnakeState.centaurTeamId` already maps `snakeId → centaurTeamId`, so given any `snake_moved.snakeId` the team is derivable by lookup and needn't be carried on the event. The only non-redundant bit in the original encoding was "was any move staged at all vs. engine fallback", which the `null` sentinel bundled in as a side effect rather than as a deliberate design choice. Second, it does not satisfy 01-REQ-052, which was written post-hoc and explicitly lists "identity of who staged the move" as part of the closed event set. Team identity is not the same concept as operator/centaur identity.
 
 - Options B and C both treat module 01 as if it cannot speak about staged-move attribution at all, and offload the concept to module 04. This is an over-reading of the "module 01 has no dependencies" rule. The rule prohibits module 01 from *depending on* module 03's `Identity`; it does not prohibit module 01 from defining its own local concept of "who staged this move" with its own id types that other modules later map into. Keeping `TurnEvent` schema ownership in module 01 (per the existing design stance) while introducing a module-01-local `Agent` type is strictly cleaner than either wrapper layer (B) or schema-ownership relocation (C).
 
@@ -1434,13 +1434,13 @@ The framing of the original question ("is team-level attribution sufficient?") w
 
 **Scope of change**:
 
-- **Section 3.1 (Enums and Branded Types)**: added `CentaurTeamId`, `OperatorId` branded types (string-based, values are Convex record `_id`s per resolved 03-REVIEW-011) and the `Agent` discriminated union.
-- **Section 2.11 (Turn Event Schema)**: `snake_moved.stagedByTeamId: TeamId | null` replaced by `stagedBy: Agent | null`; inline comment explains that team attribution is derivable from `snakeId` and so is not duplicated on the event.
-- **Section 2.11 scoping note**: rewritten to describe the Agent-based resolution instead of the original TeamId fallback.
+- **Section 3.1 (Enums and Branded Types)**: added `CentaurTeamDocId`, `OperatorId` branded types (string-based, values are Convex record `_id`s per resolved 03-REVIEW-011) and the `Agent` discriminated union.
+- **Section 2.11 (Turn Event Schema)**: `snake_moved.stagedByCentaurTeamId: CentaurTeamId | null` replaced by `stagedBy: Agent | null`; inline comment explains that team attribution is derivable from `snakeId` and so is not duplicated on the event.
+- **Section 2.11 scoping note**: rewritten to describe the Agent-based resolution instead of the original CentaurTeamId fallback.
 - **Section 3.8 (Entry Points)**: `resolveTurn`'s `stagedMoves` parameter retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>`, with `StagedMove = {direction, stagedBy: Agent}` added as an exported interface.
 - **Section 2.8 (Turn Resolution Pipeline) — Phase 1 pseudocode**: each `moves[snakeId]` entry now carries `{direction, stagedBy}` where `stagedBy` is `null` in the lastDirection and turn-0 random fallback branches. Phase 2 reads `moves[snakeId].direction`; Phase 11's emission of `snake_moved` reads `moves[snakeId].stagedBy`.
 
-**Downstream impact**: Module 04's deployment-time mapping `Identity → Agent` is now a hard dependency. Its implementation must cover both kinds: Google-authenticated users map to `{kind: 'operator', operatorId}`, and Centaur Team bot connections map to `{kind: 'centaur_team', centaurTeamId}`. The id-space discipline (disjoint `CentaurTeamId` and `OperatorId` spaces) is owned by whichever module populates the mapping — module 01 does not enforce it.
+**Downstream impact**: Module 04's deployment-time mapping `Identity → Agent` is now a hard dependency. Its implementation must cover both kinds: Google-authenticated users map to `{kind: 'operator', operatorId}`, and Centaur Team bot connections map to `{kind: 'centaur_team', centaurTeamDocId}`. The id-space discipline (disjoint `CentaurTeamDocId` and `OperatorId` spaces) is owned by whichever module populates the mapping — module 01 does not enforce it.
 
 **Revisit if**: the platform introduces a third class of staging actor (e.g. an external API bot that is neither a Centaur Server nor an authenticated human). The `Agent` union would then need a third variant, which is a module-01 version bump.
 
@@ -1466,7 +1466,7 @@ The framing of the original question ("is team-level attribution sufficient?") w
 
 **Type**: Proposed Addition
 **Phase**: Design
-**Context**: The `resolveTurn` entry point in Section 3.8 takes and returns a `GameState` type, but `GameState`'s aggregate shape is not exported — the design notes that consumers interact with its components (`Board`, `SnakeState[]`, `ItemState[]`, `TeamClockState[]`) individually. Module 04 (stdb-engine) is the most likely consumer of the aggregate since it needs to serialise state to SpacetimeDB tables. If module 04 defines its own aggregate independently, there is a risk of drift between "module 01's notion of game state" and "module 04's notion of game state" especially as new fields are added.
+**Context**: The `resolveTurn` entry point in Section 3.8 takes and returns a `GameState` type, but `GameState`'s aggregate shape is not exported — the design notes that consumers interact with its components (`Board`, `SnakeState[]`, `ItemState[]`, `CentaurTeamClockState[]`) individually. Module 04 (stdb-engine) is the most likely consumer of the aggregate since it needs to serialise state to SpacetimeDB tables. If module 04 defines its own aggregate independently, there is a risk of drift between "module 01's notion of game state" and "module 04's notion of game state" especially as new fields are added.
 **Question**: Should `GameState` be an exported aggregate type (either as a plain interface or as a constructor function), or should the "components only" approach persist with module 04 building its own aggregate?
 **Options**:
 - A: Export `GameState` as a concrete `interface GameState` with readonly fields for each component. Binds module 04 to a specific aggregate shape but eliminates drift risk.
@@ -1535,7 +1535,7 @@ Option A was rejected because it retains the exact asymmetry and reducer problem
   - Section 2.1: `EffectInstance` interface replaced with `PotionEffect`; `SnakeState` drops `invulnerabilityLevel` and `visible` fields; post-code paragraphs rewritten to describe derived-value semantics and the ≤1-per-family invariant.
   - Section 2.6: Snake init no longer initialises the removed fields.
   - Section 2.7: Full rewrite covering the symmetric buff/debuff model, the ≤1-per-family invariant, derived-value functions, duration encoding, re-collection refresh semantics, team-wide family-scoped cancellation, and disruption buffer behaviour.
-  - Section 2.8 pseudocode: Phase 3b/3c read `invulnerabilityLevel(attacker)` / `invulnerabilityLevel(victim)` via the derived function; Phase 6 rewritten as a collect-and-aggregate team rebuild keyed by `(teamId, family)` with replace-on-pending; Phase 9 restructured into 9a (cancel by team/family for disrupted debuff-holders), 9b (apply pending with replace-semantics against `activeEffects`), 9c (expire), no 9d.
+  - Section 2.8 pseudocode: Phase 3b/3c read `invulnerabilityLevel(attacker)` / `invulnerabilityLevel(victim)` via the derived function; Phase 6 rewritten as a collect-and-aggregate team rebuild keyed by `(centaurTeamId, family)` with replace-on-pending; Phase 9 restructured into 9a (cancel by team/family for disrupted debuff-holders), 9b (apply pending with replace-semantics against `activeEffects`), 9c (expire), no 9d.
   - Phase 9 ordering rationale and Phase 3 simultaneity clarifying example updated to reference the derived-value functions.
   - Section 2.11: `effect_applied` event carries `{family, state, expiryTurn}`; `effect_cancelled` carries `{family, reason}` with `reason` gaining `'replaced'` alongside the existing disruption cases.
 - **Exported interfaces** (Phase 2):
