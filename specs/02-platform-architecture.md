@@ -422,7 +422,7 @@ Satisfies 02-REQ-034 through 02-REQ-037.
 ```typescript
 export {
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurId, OperatorId,
+  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurTeamId, OperatorId,
   Agent, BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
   PotionEffect, SnakeState, ItemState, Board, TeamClockState,
   GameConfig, GameOutcome, TurnEvent, DeathCause,
@@ -481,7 +481,7 @@ Spectator Browser
     └── Subscribe: platform state (game record, room state)
 ```
 
-The SpacetimeDB connection uses a spectator access token ([03]) — an RS256-signed JWT with `sub: "spectator:{operatorId}"` — that authorizes subscription queries but does not authorize any reducer calls (no `stage_move`, no `declare_turn_over`). Spectating connections are subject to the same RLS invisibility filtering as opponent team connections — spectators cannot see invisible snakes of any team (02-REQ-010). The Convex connection provides reactive platform state updates (game record status, room state). Outside of spectating, the web client uses only its Convex client connection for platform features (rooms, profiles, leaderboards).
+The SpacetimeDB connection uses a spectator access token ([03]) — an RS256-signed JWT with `sub: "spectator:{operatorId}"` (where `operatorId` is the Convex `users._id` string) — that authorizes subscription queries but does not authorize any reducer calls (no `stage_move`, no `declare_turn_over`). Spectating connections are subject to the same RLS invisibility filtering as opponent team connections — spectators cannot see invisible snakes of any team (02-REQ-010). The Convex connection provides reactive platform state updates (game record status, room state). Outside of spectating, the web client uses only its Convex client connection for platform features (rooms, profiles, leaderboards).
 
 **Operator web app serving** (02-REQ-040). The operator interface is served by the team's nominated Snek Centaur Server. The server serves static assets (HTML, JS, CSS) over HTTP and the browser client establishes the dual connections described above. Since every Snek Centaur Server serves the same unified web application, a user can visit any server for platform pages; the operator interface for a specific team is accessed via the server that team has nominated.
 
@@ -616,7 +616,7 @@ The shared engine codebase re-exports all of Module 01's exported interfaces (Se
 export {
   // Enums and branded types (01 §3.1)
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurId, OperatorId, Agent,
+  Cell, SnakeId, TeamId, ItemId, TurnNumber, CentaurTeamId, OperatorId, Agent,
   BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
 
   // State shapes (01 §3.2)
@@ -753,7 +753,7 @@ export interface SnekCentaurServerConnectionModel {
 }
 ```
 
-**DOWNSTREAM IMPACT**: [03] must issue distinct SpacetimeDB access tokens for operators (`sub: "operator:..."`), bot participants (`sub: "centaur:..."`), and spectators (`sub: "spectator:..."`). [04] must enforce capability restrictions based on the `sub` prefix — spectators cannot call `stage_move` or `declare_turn_over`. [08] must implement the operator dual-connection flow, the spectator connection flow, and the multi-tenant server connection management.
+**DOWNSTREAM IMPACT**: [03] must issue distinct SpacetimeDB access tokens for operators (`sub: "operator:{users._id}"`), bot participants (`sub: "centaur:{centaur_teams._id}"`), and spectators (`sub: "spectator:{users._id}"`). [04] must enforce capability restrictions based on the `sub` prefix — spectators cannot call `stage_move` or `declare_turn_over`. [08] must implement the operator dual-connection flow, the spectator connection flow, and the multi-tenant server connection management.
 
 ### 3.9 Snek Centaur Server Lifecycle Contract
 
