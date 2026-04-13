@@ -56,9 +56,9 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-019**: Upon successful ticket validation, the runtime shall associate the calling connection's opaque connection identifier with the ticket's asserted Centaur Team (except for spectator tickets, which associate no team per [03-REQ-026]) and asserted role (human participant, bot participant, or spectator). This association shall persist for the lifetime of the connection without further ticket re-checks, consistent with [03-REQ-021].
 
-**04-REQ-020**: The runtime shall maintain, for the full lifetime of the game instance, a **participant attribution record** that maps each connection identifier that has successfully registered to enough information to later resolve it, at replay export time, to either (a) the email address of a human participant or (b) a reference identifying the bot participant of a specific Centaur Team. This record shall be populated on each successful registration from the ticket contents. (Satisfies [03-REQ-044].)
+**04-REQ-020**: The runtime shall maintain, for the full lifetime of the game instance, a **participant attribution record** that maps each connection that has successfully registered to an `Agent` value (as defined by [01]: `{kind: 'centaur', centaurId}` for Centaur Server connections, or `{kind: 'operator', operatorId}` for human-authenticated connections). This mapping shall be derived from the admission-ticket contents at the time of the `register` call — the SpacetimeDB connection Identity is resolved to an `Agent` at registration time, not deferred to replay-export time. The record shall be retained for the full lifetime of the game instance. (Satisfies [03-REQ-044]. Resolves 04-REVIEW-011.)
 
-**04-REQ-021**: The participant attribution record shall not be mutated or deleted when the underlying connection is closed, whether by network interruption, client shutdown, or reconnection. A client that reconnects shall obtain a fresh connection identifier and a fresh attribution entry; previous entries remain intact so that historical `stagedBy` references from earlier turns remain resolvable.
+**04-REQ-021**: The participant attribution record shall not be mutated or deleted when the underlying connection is closed, whether by network interruption, client shutdown, or reconnection. A client that reconnects shall obtain a fresh connection identifier and a fresh `Agent`-mapped attribution entry; previous entries remain intact so that historical `stagedBy: Agent` references from earlier turns remain resolvable without re-consulting the original connection Identity.
 
 **04-REQ-022**: The runtime shall reject any connection registration whose admission ticket fails any of the criteria enumerated in [03-REQ-023]. A rejected registration shall not result in any association or attribution record being written.
 
@@ -72,7 +72,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-025**: At any instant during a turn, the runtime shall retain at most one staged move per snake. A new staged move for a snake whose previous staged move has not yet been consumed by turn resolution shall overwrite the previous staged move. Overwrite is the sole mechanism for changing a staged move; there is no separate cancel-move operation. (Satisfies [02-REQ-011].)
 
-**04-REQ-026**: Each accepted staged move shall be recorded together with the opaque connection identifier of the connection that wrote it (`stagedBy`) and the wall-clock time at which the move was accepted. When an overwrite occurs, these fields shall reflect the most recent writer and time, discarding the previous writer's identity and time.
+**04-REQ-026**: Each accepted staged move shall be recorded together with the `Agent` value (per 04-REQ-020) of the connection that wrote it (`stagedBy: Agent`) and the wall-clock time at which the move was accepted. When an overwrite occurs, these fields shall reflect the most recent writer's `Agent` and time, discarding the previous writer's attribution and time.
 
 **04-REQ-027**: The staged-move storage shall be **transient**: it shall not form part of the historical record of Section 4.2. Staged moves are consumed and cleared by turn resolution (Section 4.7); after clearing, no record of the previously staged direction shall remain in the runtime except as captured by the movement event emitted for the turn in question (Section 4.8).
 
@@ -104,11 +104,11 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-037**: Turn resolution shall execute as a **single atomic transaction**, such that either every state mutation produced by the eleven-phase pipeline is observable to subscribed clients simultaneously, or none of them are. No intermediate state from within the resolution pipeline shall be observable to any subscribed client. (Restates [02-REQ-008] at this module's level of specificity.)
 
-**04-REQ-038**: Within the atomic transaction of turn resolution, the runtime shall, in order: (a) read the current set of staged moves; (b) run the eleven-phase pipeline of [01-REQ-041]; (c) for each snake that moved, emit a movement event recording the direction moved, whether growth occurred, and the opaque `stagedBy` connection identifier of the connection that staged the move that was consumed (or a well-defined sentinel if the move was determined by the fallback rule of [01-REQ-042] because no move was staged); (d) emit all other turn events required by [01-REQ-052] (Section 4.8); (e) append the new turn-`T+1` snake-state snapshots, updated item-lifetime records, and post-turn time-budget entries to the historical record; (f) clear all staged moves; (g) add the budget increment to each team's budget per [01-REQ-036].
+**04-REQ-038**: Within the atomic transaction of turn resolution, the runtime shall, in order: (a) read the current set of staged moves (each carrying its `stagedBy: Agent` per 04-REQ-026); (b) run the eleven-phase pipeline of [01-REQ-041]; (c) for each snake that moved, emit a movement event recording the direction moved, whether growth occurred, and the `Agent` value of the connection that staged the move that was consumed (or `null` if the move was determined by the fallback rule of [01-REQ-042] because no move was staged); (d) emit all other turn events required by [01-REQ-052] (Section 4.8); (e) append the new turn-`T+1` snake-state snapshots, updated item-lifetime records, and post-turn time-budget entries to the historical record; (f) clear all staged moves; (g) add the budget increment to each team's budget per [01-REQ-036].
 
-**04-REQ-039**: The `stagedBy` value captured in movement events shall be the opaque connection identifier of the most recent writer per 04-REQ-026, without any interpretation, mapping, or substitution by the runtime. (Satisfies [03-REQ-032]'s no-interpretation constraint.)
+**04-REQ-039**: The `stagedBy` value captured in movement events shall be the `Agent` resolved from the staging connection's Identity at registration time per 04-REQ-020 and carried through from the staged-move record per 04-REQ-026. No further interpretation, mapping, or substitution of the `Agent` value is performed during turn resolution or replay export. (Satisfies [03-REQ-032]. Resolves 04-REVIEW-011.)
 
-**04-REQ-040**: If a snake had no staged move at the moment of turn resolution and its direction was determined by the Phase 1 fallback rule of [01-REQ-042], the movement event for that snake shall distinguish the fallback case from the staged-move case. The `stagedBy` field of the movement event shall be **nullable**; it shall be populated with the connection identifier of the writer whose staged move was consumed when the move was staged, and shall be **null** when the move was determined by fallback. The fallback case covers both (a) subsequent-turn fallback to `lastDirection` per [01-REQ-042(b)] and (b) turn-0 random fallback per [01-REQ-042(c)] when no move was staged. (Resolves 04-REVIEW-002.)
+**04-REQ-040**: If a snake had no staged move at the moment of turn resolution and its direction was determined by the Phase 1 fallback rule of [01-REQ-042], the movement event for that snake shall distinguish the fallback case from the staged-move case. The `stagedBy` field of the movement event shall be **nullable** (`Agent | null`); it shall be populated with the `Agent` of the writer whose staged move was consumed when the move was staged, and shall be **null** when the move was determined by fallback. The fallback case covers both (a) subsequent-turn fallback to `lastDirection` per [01-REQ-042(b)] and (b) turn-0 random fallback per [01-REQ-042(c)] when no move was staged. (Resolves 04-REVIEW-002.)
 
 **04-REQ-041** *(negative)*: Once turn resolution for turn `T` has committed, the runtime shall not accept further staged moves or turn-over declarations attributable to turn `T`. Any such operations received after commitment shall either be treated as pertaining to turn `T+1` (if they arrive after the new turn has begun) or rejected, at the runtime's discretion; the runtime shall not silently reorder them into turn `T`'s committed state.
 
@@ -133,7 +133,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-044**: Each turn-event record shall include enough information for a replay or animation client to visualise the associated outcome without re-executing turn resolution. In particular, event records shall not require the client to diff successive snake-state snapshots to recover information that the event describes (e.g., a death event shall carry the cause explicitly rather than requiring the client to infer it from a snake's alive-to-dead transition).
 
-**04-REQ-045**: The set of emitted events for a given turn shall be totally ordered within that turn. The ordering shall reflect the phase order defined by [01]'s pipeline (Phase 1 events before Phase 2 events, and so on). Within a single phase, events shall be ordered by ascending snake identifier of the primary subject of each event (the moving snake for movement, the dying snake for death, the collector for potion collection, the eater for food consumption, the affected snake for effect application/cancellation/hazard damage, and so on); phase-internal events that have no snake subject (food spawning, potion spawning) shall follow all snake-subject events of the same phase in ascending item-identifier order. The resulting total order shall be stable across independent replays of the same game seed. (Resolves 04-REVIEW-004.)
+**04-REQ-045**: A turn's events form a **set** — they are not causally or temporally ordered with respect to each other within the turn; they are all produced atomically by a single turn-resolution transaction. For storage, replay consistency, and deterministic bit-exact comparison across independent runs, this set is given a **canonical representation order**. The ordering keys, applied in priority order, are: (1) **phase** — Phase 1 events before Phase 2 events, and so on through the eleven-phase pipeline; (2) **event-type class** within a phase — event types are grouped into an implementation-defined but fixed class order (e.g., movement events before death events before collection events within phases that produce multiple types); (3) **ascending snake identifier** of the primary subject within each event-type class (the moving snake for movement, the dying snake for death, the collector for potion collection, the eater for food consumption, the affected snake for effect application/cancellation/hazard damage, and so on); phase-internal events that have no snake subject (food spawning, potion spawning) shall follow all snake-subject events of the same phase in ascending item-identifier order. The resulting total order is a canonical representation order for storage and replay — it does not express causal or temporal dependencies between events within the turn and imposes no delivery-order obligation on subscription infrastructure. The canonical order shall be stable across independent replays of the same game seed. (Resolves 04-REVIEW-004; see also 04-REVIEW-009.)
 
 **04-REQ-046** *(negative)*: The runtime shall not emit turn events that imply the existence of game mechanics not specified in [01]. The closed enumeration of 04-REQ-043 is exhaustive for the Team Snek ruleset as specified in this spec version.
 
@@ -189,7 +189,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved. Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves or turn-declaration operations arriving after the commit of turn `T_end` shall be rejected as "game over" — there is no grace window between commit and enforcement.
 
-**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4 in a form that permits `stagedBy` connection identifiers to be resolved to human emails or Centaur Server team references per [03-REQ-045]. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied.
+**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4. Because `stagedBy` fields already carry `Agent` values (resolved at registration time per 04-REQ-020), no Identity→email/team-reference resolution step is required during replay export; the exported record already contains Convex-interpretable `Agent` values throughout. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied. (See also [03-REQ-045].)
 
 **04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance via a privileged operation authenticated per [03-REQ-048]. The notification mechanism shall use best-practice platform affordances (e.g., SpacetimeDB's webhook subscription mechanism if available, with Convex having registered its interest at game-initialisation time); specifics are a Phase 2 Design concern. The notification need not itself carry the complete historical record; its minimum obligation is to convey that the game has ended and to identify the instance.
 
@@ -361,7 +361,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 ---
 
-### 04-REVIEW-009: Turn event ordering guarantees during subscription delivery
+### 04-REVIEW-009: Turn event ordering guarantees during subscription delivery — **RESOLVED**
 
 **Type**: Proposed Addition
 **Phase**: Requirements
@@ -370,9 +370,11 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 **Proposed requirement**: "Subscribed clients shall receive turn events for a given turn in the order specified by 04-REQ-045. Delivery order shall match emission order."
 **Informal spec reference**: §10 client query patterns; §14.
 
+**Decision**: No new delivery-order requirement. A turn's events form a *set* — there are no causal or temporal dependencies between events within a turn; they are all produced atomically. The total ordering defined by 04-REQ-045 is a **canonical representation order** for storage and replay consistency, not an expression of causal sequence. The canonical order sorts events by: (1) phase, (2) event-type class within a phase, (3) ascending snake identifier within each event-type class (ascending item identifier for non-snake-subject events). Turn resolution does not depend on the temporal order in which events are received by the server within a turn. Because the canonical order is a property of the stored representation (not of delivery), clients that need deterministic replay ordering shall read from the stored record in canonical order; they shall not rely on subscription delivery order. No guarantee about subscription delivery order is added. 04-REQ-045 has been amended to make the set-based, event-type-class, and canonical-order distinctions explicit.
+
 ---
 
-### 04-REVIEW-010: Scope of "data layer" visibility filter (RLS vs view)
+### 04-REVIEW-010: Scope of "data layer" visibility filter (RLS vs view) — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
@@ -383,9 +385,11 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - B: Restate as "server-side, pre-delivery" — decouples from substrate entirely.
 **Informal spec reference**: §2 "SpacetimeDB (Game Runtime)"; §10.
 
+**Decision**: Option A — keep "data layer" as the abstraction. It encompasses RLS and any future equivalent mechanism. No requirement text changes needed.
+
 ---
 
-### 04-REVIEW-011: Interaction between `team_permissions` retention and STDB disconnect semantics
+### 04-REVIEW-011: Interaction between `team_permissions` retention and STDB disconnect semantics — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
@@ -395,6 +399,15 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 - A: Assume per-connection Identity (current draft); verify in Phase 2 and adjust if wrong.
 - B: Verify now and restate if SpacetimeDB semantics are different.
 **Informal spec reference**: §10 `register`; [03-REQ-044].
+
+**Decision**: The unresolved question about SpacetimeDB Identity semantics is rendered moot by a higher-level architectural decision. Module 01 defines an `Agent` discriminated union (`{kind: 'centaur', centaurId}` | `{kind: 'operator', operatorId}`) as the module-local concept for event attribution (per resolved 01-REVIEW-011). The SpacetimeDB connection Identity is now resolved to an `Agent` value **at move-staging time** (specifically, at `register` reducer time, when ticket contents are available), not deferred to replay-export time. Consequently:
+- `stagedBy` fields stored in STDB carry `Agent | null`, not opaque Identity.
+- The participant attribution record (04-REQ-020) maps each connection to its resolved `Agent` at registration time.
+- 04-REQ-039's "no-interpretation" constraint has been rewritten: the runtime does perform the Identity→Agent mapping, but solely at registration time from ticket contents; no further interpretation occurs during turn resolution or replay export.
+- 04-REQ-061 no longer requires a resolution step at replay-export time; exported records already contain `Agent` values.
+- Module 03 requirements (03-REQ-032, 03-REQ-044, 03-REQ-045) and the 03-REVIEW-005 RESOLVED block have been updated accordingly.
+
+**Affected requirements**: 04-REQ-020, 04-REQ-021, 04-REQ-026, 04-REQ-038(c), 04-REQ-039, 04-REQ-040, 04-REQ-061; cascading to 03-REQ-032, 03-REQ-044, 03-REQ-045, 03-REVIEW-005.
 
 ---
 
