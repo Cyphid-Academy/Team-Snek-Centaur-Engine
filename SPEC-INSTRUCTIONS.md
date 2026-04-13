@@ -268,19 +268,11 @@ The replay system spans four modules:
 - **04** defines the SpacetimeDB append-only log schema that constitutes the game state record.
 - **05** defines how Convex reads and stores the log at game end (informal spec Section 13.1), and hosts the `replays` table.
 - **06** defines the `centaur_action_log` schema that provides sub-turn Centaur experience data for team replays.
-<<<<<<< HEAD
-- **08** implements the unified replay viewer, consuming both the game log (via 05's replay query interface) and the action log (via 06's exported interfaces). The viewer provides turn-level board state and event log for all users, plus sub-turn timeline with within-turn Centaur Team actions gated by game privacy and team membership (admin users see all).
-
-### Unified Snek Centaur Server Application Boundary
-
-The unified Snek Centaur Server web application (module 08) handles both platform-level concerns (rooms, lobbies, team management, spectating, leaderboards, profiles) and team-internal competitive operation (heuristic configuration, bot parameters, live gameplay, team replay with sub-turn resolution). Every Snek Centaur Server is a full-platform frontend to the same Convex backend. There is no separate Game Platform Server runtime. Bot parameters, heuristic configuration, and Drive management are team-internal affordances within the unified application. The Centaur Team management page is limited to identity, server nomination, and member management — no bot or heuristic configuration.
-=======
 - **08** implements the unified replay viewer (informal spec Sections 13.2 and 13.3), consuming both the game log (via 05's replay query interface) for board-level turn-granularity replay, and the action log (via 06's exported interfaces) for team-perspective sub-turn replay. (Module 09's platform replay viewer has been absorbed into Module 08.)
 
 ### Snek Centaur Server Frontend (Unified UI)
 
 Module 08 (Snek Centaur Server Frontend) is the single human-facing web application for the platform. It encompasses both team-internal competitive operation (heuristic configuration, bot parameters, live gameplay, team replay) and platform-wide cross-team concerns (team management, room management, game spectating, replay viewing, profiles, leaderboards, API key management). There is no separate "Game Platform" web application — Module 09 has been absorbed into Module 08 and exists only as a redirect stub. Bot parameters, heuristic configuration, and Drive management remain team-scoped affordances accessible only in the context of a specific hosted Centaur Team. The Team Management view is limited to identity, nominated server domain, and member management — no bot or heuristic configuration. A single Snek Centaur Server may host multiple Centaur Teams.
->>>>>>> c944898 (Cascade multi-tenant architecture changes through Modules 04-09)
 
 ---
 
