@@ -1080,6 +1080,10 @@ export type GameOutcome =
       readonly tiedCentaurTeamIds: ReadonlyArray<CentaurTeamId>
       readonly scores: ReadonlyMap<CentaurTeamId, number>
     }
+  | {
+      readonly kind: 'error'
+      readonly reason: string
+    }
 ```
 
 ### 3.5 Turn Event Schema

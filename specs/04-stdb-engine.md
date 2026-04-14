@@ -241,6 +241,7 @@ interface GameConfigRow {
   readonly gameSeed: Uint8Array           // per-game root seed [01-REQ-059]; needed for turn-seed
                                           // derivation in resolve_turn and for replay export [04-REQ-061]
   readonly gameEndCallbackUrl: string     // Convex HTTP action URL for game-end notification [04-REQ-061a]
+  readonly gameOutcomeCallbackToken: string // Convex-signed JWT for authenticating the game-end POST [03-REQ-037]
   readonly snakesPerTeam: number
   readonly maxHealth: number
   readonly maxTurns: number               // 0 = no limit [01-REQ-058]
@@ -441,6 +442,7 @@ interface InitializeGameParams {
   readonly gameId: string
   readonly gameSeed: Uint8Array
   readonly gameEndCallbackUrl: string
+  readonly gameOutcomeCallbackToken: string
   readonly board: {
     readonly boardSize: number
     readonly width: number
@@ -491,7 +493,7 @@ interface InitializeGameParams {
 
 1. **Re-invocation guard** [04-REQ-016]: Read `game_runtime.initialized`. If true, reject with error.
 2. **Structural validation** [04-REQ-017]: Validate the received state — correct board dimensions (`width * height === cells.length`), all cell values are valid `CellType` values, snake count matches `teams.length * snakesPerTeam`, all item positions are within board bounds with valid `ItemType` values, at least two CentaurTeams, each snake has body length ≥ 1. On validation failure, return a synchronous error to the caller (a coding-error check, not a user-facing failure path — see resolved 04-REVIEW-008).
-3. **Write static tables**: Insert `game_config` row (gameId, gameSeed, gameEndCallbackUrl, all dynamic gameplay params), `board_state` row (boardSize, width, height, cells), and one `centaur_team_roster` row per CentaurTeam (centaurTeamId, centaurTeamDocId, serialized operatorIds).
+3. **Write static tables**: Insert `game_config` row (gameId, gameSeed, gameEndCallbackUrl, gameOutcomeCallbackToken, all dynamic gameplay params), `board_state` row (boardSize, width, height, cells), and one `centaur_team_roster` row per CentaurTeam (centaurTeamId, centaurTeamDocId, serialized operatorIds).
 4. **Write turn-0 historical records** [04-REQ-014b, 04-REQ-014c, 04-REQ-014d]:
    - Insert one `snake_states` row per snake for turn 0, with denormalized `invulnerabilityLevel` and `visible` computed via the shared engine's `invulnerabilityLevel()` and `isVisible()` functions.
    - Insert one `item_lifetimes` row per initial item with `spawnTurn = 0` and `destroyedTurn = null`.
@@ -717,8 +719,8 @@ reducer resolve_turn():
   if result.outcome.kind !== 'in_progress':
     game_runtime.gameEnded = true
     game_runtime.terminalOutcomeJson = JSON.stringify(result.outcome)
-    // Schedule game-end notification (Section 2.10)
-    schedule notify_game_end immediately
+    // Trigger game-end notification procedure (Section 2.10)
+    insert into game_end_notification_schedule  // triggers notify_game_end procedure post-commit
   else:
     // Schedule clock expiry for next turn (Section 2.6)
     schedule check_clock_expiry at (turnStartTimeMs + maxPerTurnMs)
@@ -819,20 +821,28 @@ Satisfies 04-REQ-060, 04-REQ-061a, 04-REQ-065.
 
 When `resolve_turn` detects a terminal `GameOutcome` (victory, draw, or max-turns-reached) in step 11, it:
 1. Sets `game_runtime.gameEnded = true` and stores the terminal outcome.
-2. Schedules a `notify_game_end` reducer to fire immediately (post-commit).
+2. Inserts a row into the `game_end_notification_schedule` schedule table, which triggers the `notify_game_end` **procedure** to fire immediately (post-commit).
 
-The `notify_game_end` scheduled reducer:
+The `game_end_notification_schedule` schedule table drives the `notify_game_end` procedure invocation. SpacetimeDB's schedule table mechanism ensures the procedure runs after the triggering reducer's transaction commits.
+
+The `notify_game_end` **scheduled procedure**:
 1. Reads `game_config.gameEndCallbackUrl` (the Convex HTTP action URL registered at init time).
-2. Constructs the notification payload (Section 3.3).
-3. Constructs a management JWT for authentication per [03] §3.22 — an RS256-signed JWT with `iss: CONVEX_SITE_URL`, `sub: "platform:stdb-module"`, `aud: gameEndCallbackUrl`, `exp: now + 300s`.
-4. Sends an HTTP POST to `gameEndCallbackUrl` with the notification payload in the request body and the management JWT as a Bearer token in the Authorization header.
+2. Reads `game_config.gameOutcomeCallbackToken` (the Convex-signed JWT provided at init time).
+3. Constructs the notification payload (Section 3.3).
+4. Sends an HTTP POST to `gameEndCallbackUrl` via `ctx.http.fetch()` with the notification payload as a JSON request body and the `gameOutcomeCallbackToken` as a Bearer token in the Authorization header.
 5. On HTTP failure (non-2xx response or network error): retries with exponential backoff (initial delay 1s, max 3 retries). If all retries fail, the notification is lost but the game state remains correct — Convex can detect stale games via polling as a fallback.
 
-**Design decision — scheduled reducer for notification**: The notification is sent from a scheduled reducer rather than from within the `resolve_turn` transaction itself. This is because (a) HTTP calls from within a SpacetimeDB reducer transaction may not be supported or may block the transaction, and (b) the notification is a side effect that should not prevent the game-ending turn from committing. If the HTTP call fails, the game state is still correct.
+**Design decision — scheduled procedure, not reducer**: The notification is sent from a scheduled **procedure** rather than a scheduled reducer. SpacetimeDB Procedures (beta) support outgoing HTTP via `ctx.http.fetch()`, whereas reducers do not have access to network I/O. Using a procedure also ensures the HTTP call is a side effect that does not participate in the triggering reducer's ACID transaction — if the HTTP call fails, the game state remains correct.
 
-**Design decision — management JWT for authentication**: The STDB module holds no persistent secrets. For the game-end notification, it constructs a JWT using the management signing key that is part of the SpacetimeDB module's configuration. The Convex endpoint validates this JWT against the same OIDC discovery mechanism used for all Convex-to-STDB authentication.
+**Design decision — Convex-signed callback token, not in-module JWT construction**: Rather than having the STDB module construct and sign its own JWT (which would require crypto operations in the WASM runtime), Convex pre-signs a scoped callback token at game provisioning time and passes it via `initialize_game`. This keeps Convex as the sole credential issuer (03-REQ-037) and avoids embedding any cryptographic signing material or operations in the WASM runtime. The token has a 2-hour lifetime (`exp: now + 2h` at provisioning time), which is well in excess of the maximum expected game duration.
 
-**04-REVIEW-019** (new): The design assumes SpacetimeDB TypeScript modules can (a) make outgoing HTTP requests and (b) sign JWTs. If these capabilities are not available in the SpacetimeDB TypeScript SDK, the game-end notification must be implemented differently — e.g., by writing a sentinel row to a `game_end_notifications` table that Convex polls, or by using SpacetimeDB's built-in webhook mechanism if available. See REVIEW Items section.
+**JWT claims contract for the game-outcome callback token** (issued by Convex at provisioning time):
+- `iss`: `CONVEX_SITE_URL` (Convex as issuer).
+- `sub`: `"stdb-instance:{gameId}"` (scoped to the specific game instance).
+- `aud`: `gameEndCallbackUrl` (the callback endpoint URL).
+- `exp`: `now + 2h` (2-hour lifetime from provisioning time).
+
+The Convex callback endpoint validates the token by verifying the RS256 signature against its own public key (or the dedicated callback-token key pair), checking `iss`, `aud`, and `exp`, and extracting `gameId` from the `sub` claim to correlate the notification with the correct game record.
 
 **Convex callback registration**: The `gameEndCallbackUrl` is passed as a parameter to `initialize_game` and stored in `game_config`. This URL points to a Convex HTTP action endpoint that handles game-end orchestration (score display, replay persistence, teardown scheduling per [05-REQ-038]). Convex registers this URL at game-init time as part of the [05-REQ-032] orchestration per [05-REQ-032a].
 
@@ -926,6 +936,7 @@ interface InitializeGameParams {
   readonly gameId: string
   readonly gameSeed: Uint8Array
   readonly gameEndCallbackUrl: string
+  readonly gameOutcomeCallbackToken: string
   readonly board: {
     readonly boardSize: number            // BoardSize enum value
     readonly width: number
@@ -1060,11 +1071,12 @@ type GameOutcome =
       readonly scores: Record<string, number> }
   | { readonly kind: 'draw'; readonly tiedCentaurTeamIds: ReadonlyArray<number>;
       readonly scores: Record<string, number> }
+  | { readonly kind: 'error'; readonly reason: string }
 ```
 
-`GameOutcome` matches [01] §3.4 but uses `Record<string, number>` for scores (JSON-serializable form of `ReadonlyMap<CentaurTeamId, number>`). `finalTurn` is the turn number at which the terminal outcome was detected.
+`GameOutcome` matches [01] §3.4 but uses `Record<string, number>` for scores (JSON-serializable form of `ReadonlyMap<CentaurTeamId, number>`). The `error` variant has no `scores` field (scores are meaningless for interrupted games); its `reason` field is a human-readable string describing the interruption cause. `finalTurn` is the turn number at which the terminal outcome was detected; for error cases, this is the last successfully resolved turn (may be 0 if the error occurred before any turn was resolved).
 
-**DOWNSTREAM IMPACT**: [05] must implement an HTTP action endpoint that receives this payload at the `gameEndCallbackUrl` registered during `initialize_game`. The endpoint authenticates the caller via the management JWT and triggers game-end orchestration (score recording, replay persistence, teardown scheduling).
+**DOWNSTREAM IMPACT**: [05] must implement an HTTP action endpoint that receives this payload at the `gameEndCallbackUrl` registered during `initialize_game`. The endpoint authenticates the caller by validating the Convex-signed callback token presented as a Bearer token and triggers game-end orchestration (score recording, replay persistence, teardown scheduling). The endpoint must handle both normal outcomes (victory, draw) and error outcomes appropriately.
 
 ### 3.4 WASM Module Deployment Artifact Contract
 
@@ -1077,15 +1089,15 @@ The SpacetimeDB game module is compiled to a WebAssembly binary using SpacetimeD
 3. **Retrieved** by Convex from file storage at game-creation time.
 4. **Submitted** to the self-hosted SpacetimeDB management API (`POST /v1/database` with the WASM binary in the request body) to create a new database instance with the module already deployed.
 
-The WASM binary encapsulates the complete game engine module: all table schemas, all reducers (`initialize_game`, `stage_move`, `declare_turn_over`, `resolve_turn`, `check_clock_expiry`, `notify_game_end`), all lifecycle callbacks (`client_connected`, `client_disconnected`), and the embedded shared engine codebase.
+The WASM binary encapsulates the complete game engine module: all table schemas, all reducers (`initialize_game`, `stage_move`, `declare_turn_over`, `resolve_turn`, `check_clock_expiry`), all procedures (`notify_game_end`), all lifecycle callbacks (`client_connected`, `client_disconnected`), and the embedded shared engine codebase.
 
 **DOWNSTREAM IMPACT**: [02] must describe the WASM compilation target and build pipeline in its design (§2.16b). [05] must store the WASM binary in Convex file storage and retrieve it during game provisioning.
 
 ### 3.5 DOWNSTREAM IMPACT Notes
 
-1. **[05] must construct `InitializeGameParams` and call `initialize_game` via HTTP API.** The parameter format (Section 3.1) includes the game seed, game-end callback URL, pre-computed initial state, dynamic gameplay params, and CentaurTeam roster. [05] must include all fields; omission of the game seed would break turn resolution determinism.
+1. **[05] must construct `InitializeGameParams` and call `initialize_game` via HTTP API.** The parameter format (Section 3.1) includes the game seed, game-end callback URL, game-outcome callback token, pre-computed initial state, dynamic gameplay params, and CentaurTeam roster. [05] must include all fields; omission of the game seed would break turn resolution determinism.
 
-2. **[05] must implement a game-end notification HTTP action endpoint.** The endpoint receives `GameEndNotification` (Section 3.3) and triggers game-end orchestration. It must authenticate the caller via the management JWT from the STDB module.
+2. **[05] must implement a game-end notification HTTP action endpoint.** The endpoint receives `GameEndNotification` (Section 3.3) and triggers game-end orchestration. It must authenticate the caller by validating the Convex-signed callback token presented as a Bearer token.
 
 3. **[05] must retrieve the complete historical record at game end.** Convex calls the STDB instance's HTTP API to read all tables (Section 2.11). The retrieval bypasses RLS and returns the complete unfiltered record including invisible snakes.
 
@@ -1395,14 +1407,9 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 
 ---
 
-### 04-REVIEW-019: SpacetimeDB TypeScript module HTTP and JWT capabilities — **OPEN**
+### 04-REVIEW-019: SpacetimeDB TypeScript module HTTP and JWT capabilities — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Design
-**Context**: Section 2.10 (Game-End Notification) designs the notification mechanism as an HTTP POST from a scheduled reducer to a Convex HTTP action endpoint, authenticated with a management JWT. This assumes the SpacetimeDB TypeScript module runtime supports (a) outgoing HTTP requests from within reducer code and (b) JWT construction and signing. These are non-trivial runtime capabilities that may not be available in SpacetimeDB's TypeScript SDK.
-**Question**: Does SpacetimeDB's TypeScript module runtime support outgoing HTTP requests and JWT signing from within scheduled reducers? If not, what alternative notification mechanism should be used?
-**Options**:
-- A: HTTP request + JWT signing from reducer code (design as specified in §2.10).
-- B: Write a sentinel row to a `game_end_signals` table; Convex polls this table periodically via the HTTP API and detects game-end by observing the sentinel.
-- C: Use SpacetimeDB's built-in webhook or event subscription mechanism (if available) to notify external listeners of specific table changes.
-**Informal spec reference**: §10 (`resolve_turn` bullet).
+**Resolution**: Option A confirmed viable via SpacetimeDB **Procedures** (beta), which support outgoing HTTP via `ctx.http.fetch()`. However, in-module JWT signing is replaced with a Convex-pre-signed callback token to keep Convex as the sole credential issuer (03-REQ-037) and avoid crypto operations in the WASM runtime. The `notify_game_end` scheduled procedure uses `ctx.http.fetch()` for the POST and presents the Convex-signed game-outcome callback token as a Bearer header. No crypto operations in the WASM runtime. See rewritten §2.10.
+**Decision summary**: Reducers cannot make HTTP calls, but Procedures can. The game-end notification is implemented as a scheduled procedure (`notify_game_end`) triggered via the `game_end_notification_schedule` schedule table. Authentication uses a Convex-signed JWT (game-outcome callback token) provisioned at init time, not an in-module-constructed JWT.

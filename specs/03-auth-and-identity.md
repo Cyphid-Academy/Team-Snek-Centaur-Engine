@@ -581,6 +581,7 @@ Satisfies 03-REQ-037, 03-REQ-038, 03-REQ-039, 03-REQ-046, 03-REQ-047, 03-REQ-040
 - Per-Centaur-Team game credentials: Ed25519-signed JWTs issued by Convex (Section 3.15).
 - SpacetimeDB access tokens: RS256-signed JWTs issued by Convex, validated via OIDC (Section 3.17).
 - API keys: generated and validated by Convex (Section 3.21).
+- Game-outcome callback tokens: RS256-signed JWTs issued by Convex at game provisioning time, scoped to a specific game and callback URL, stored in the STDB instance's `game_config` table for authenticating the game-end notification POST back to Convex (Section 3.17 key material; validated by Convex on receipt).
 
 Neither SpacetimeDB nor any Snek Centaur Server issues credentials that any other runtime accepts.
 
@@ -602,6 +603,7 @@ Compromise of the Ed25519 private key would allow an attacker to forge game cred
 - The RS256 private key for signing SpacetimeDB access tokens never leaves the Convex runtime. Only the public key is exposed, via the OIDC JWKS endpoint.
 - Game credential JWTs are transmitted only from Convex to the nominated server domain, via the game invitation POST over HTTPS.
 - SpacetimeDB access tokens are transmitted only from Convex to the requesting client (operator browser or Snek Centaur Server), via authenticated Convex endpoints.
+- Game-outcome callback tokens are transmitted from Convex to the STDB instance via the `initialize_game` reducer call over the authenticated management API connection. The token is stored in `game_config` (a private, non-subscribed table) and presented back to Convex as a Bearer token in the game-end notification POST over HTTPS.
 - No credential material is transmitted over unauthenticated channels.
 
 **Convex-to-SpacetimeDB authentication** (03-REQ-048). The platform uses a **self-hosted SpacetimeDB instance** (rationale: Australian hosting locality, cost minimization, and automation-friendly authentication affordances unavailable on SpacetimeDB maincloud). Self-hosted SpacetimeDB exposes an HTTP management API that supports externally-issued JWTs for authentication, unlike SpacetimeDB maincloud which requires GitHub OAuth and obstructs principled automation.
@@ -612,7 +614,7 @@ Convex authenticates to the self-hosted SpacetimeDB management API using a **Con
 - `aud`: The management API endpoint URL of the self-hosted SpacetimeDB instance.
 - `exp`: Short-lived (e.g., 5 minutes), sufficient only for the duration of the management operation.
 
-This JWT is presented to the self-hosted SpacetimeDB management API for all privileged operations: module provisioning, instance teardown, `initialize_game` reducer invocation, game-end notification subscription registration, and historical record retrieval. The self-hosted SpacetimeDB instance is configured to accept and validate JWTs from the Convex OIDC issuer for management operations.
+This JWT is presented to the self-hosted SpacetimeDB management API for all privileged operations: module provisioning, instance teardown, `initialize_game` reducer invocation, and historical record retrieval. The self-hosted SpacetimeDB instance is configured to accept and validate JWTs from the Convex OIDC issuer for management operations.
 
 The management JWT and signing key:
 1. Are stored as Convex environment variables (never persisted elsewhere).

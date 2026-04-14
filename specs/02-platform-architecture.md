@@ -607,6 +607,7 @@ export interface SpacetimeDbInstanceLifecycle {
       readonly gameId: string
       readonly gameSeed: Uint8Array
       readonly gameEndCallbackUrl: string
+      readonly gameOutcomeCallbackToken: string
     }
   }
   readonly teardown: {
@@ -623,7 +624,7 @@ export interface CentaurTeamMembershipRecord {
 
 `Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps — as opposed to board generation parameters. `CentaurTeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase; STDB does not call that function.
 
-**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters, game seed, and game-end callback URL — not the full `GameConfig` and not a game seed for generation purposes (the seed is forwarded for turn-resolution randomness and replay export, not for board generation). [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, retrieving the pre-compiled WASM binary from Convex file storage and including it in the `POST /v1/database` provisioning request, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [05] must store the current WASM module binary in Convex file storage, uploaded by the platform build pipeline at build/deploy time. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
+**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters, game seed, game-end callback URL, and the game-outcome callback token (a Convex-signed JWT for authenticating the game-end notification POST back to Convex) — not the full `GameConfig` and not a game seed for generation purposes (the seed is forwarded for turn-resolution randomness and replay export, not for board generation). [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, retrieving the pre-compiled WASM binary from Convex file storage and including it in the `POST /v1/database` provisioning request, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [05] must store the current WASM module binary in Convex file storage, uploaded by the platform build pipeline at build/deploy time. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
 
 ### 3.5 Shared Engine Codebase Contract
 
