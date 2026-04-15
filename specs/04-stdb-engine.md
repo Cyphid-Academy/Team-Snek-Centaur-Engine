@@ -2,7 +2,7 @@
 
 ## Requirements
 
-This module specifies the per-game runtime that authoritatively executes [01]'s game rules, holds live gameplay state, mediates client admission per [03], and retains the complete historical record of the game in a form sufficient for replay export. Its scope is bounded by [02]: it is the **SpacetimeDB game runtime** referred to throughout [02], and it owns the informal-spec material in Sections 10 (schema) and 14 (turn event schema). Requirements here are concept-level; specific table names, column names, reducer names, and RLS rule syntax are Phase 2 (Design) concerns.
+This module specifies the per-game runtime that authoritatively executes [01]'s game rules, holds live gameplay state, mediates client admission per [03], and retains the complete historical record of the game in a form sufficient for replay export. Its scope is bounded by [02]: it is the **SpacetimeDB game runtime** referred to throughout [02], and it owns the informal-spec material in Sections 10 (schema) and 14 (turn event schema). Requirements here are concept-level; specific table names, column names, reducer names, and visibility View definitions are Phase 2 (Design) concerns.
 
 ### 4.1 Scope and Module Boundaries
 
@@ -321,7 +321,7 @@ interface SnakeStateRow {
 }
 ```
 
-Primary key: `(turn, snakeId)`. The `invulnerabilityLevel` and `visible` fields are denormalized from module 01's derived functions ([01] Section 3.1) at write time to enable (a) RLS predicates to filter without deserializing `activeEffectsJson`, and (b) client queries to read visibility directly. This denormalization is safe because these values are frozen at the turn boundary and never change after write.
+Primary key: `(turn, snakeId)`. The `invulnerabilityLevel` and `visible` fields are denormalized from module 01's derived functions ([01] Section 3.1) at write time to enable (a) visibility View predicates to filter without deserializing `activeEffectsJson`, and (b) client queries to read visibility directly. This denormalization is safe because these values are frozen at the turn boundary and never change after write.
 
 **`item_lifetimes`** — One row per item. Tracks each item's existence span [04-REQ-007].
 
@@ -770,48 +770,104 @@ This total order is deterministic, derivable from the event data alone, and stab
 
 ---
 
-### 2.9 Visibility Filtering (RLS) Design
+### 2.9 Visibility Filtering via SpacetimeDB Views
 
-Satisfies 04-REQ-047 through 04-REQ-052.
+Satisfies 04-REQ-047 through 04-REQ-052. Resolves 04-REVIEW-018 (see REVIEW Items section).
 
-RLS is implemented as server-side, pre-delivery filtering applied to query results and subscription updates — conceptually equivalent to SpacetimeDB's Row Level Security (RLS) rules. RLS serves two purposes: (1) preventing invisible-opponent snake state from reaching any client [04-REQ-052], and (2) preventing access to data that clients have no legitimate need to read (staged moves, connection metadata).
+Visibility filtering is implemented using **SpacetimeDB Views** — server-side view functions that clients subscribe to in place of the underlying tables. Views are the officially recommended SpacetimeDB mechanism for per-connection visibility control. Each view receives a `ViewContext` providing `ctx.sender` (the connecting client's Identity), enabling identity-dependent filtering without exposing unfiltered data through any query path.
 
-**Invisibility principle**: Invisibility of a snake does not imply that the effects the snake has on the game board are invisible to observers. Only the `snake_states` rows for invisible opponent snakes are hidden by RLS. Items consumed by an invisible snake still disappear normally for all observers. Turn events are visible to all connections regardless of the acting snake's visibility. The invisible snake's own state record is the sole datum filtered — nothing more.
+**Implementation mechanism — query-builder Views via `ctx.from`**: SpacetimeDB Views support two internal evaluation paths:
 
-**04-REVIEW-018** (new): SpacetimeDB's TypeScript module SDK RLS API is implementation-dependent. The design below describes the filtering *semantics* precisely. If SpacetimeDB's TypeScript SDK supports declarative RLS predicates on tables, those should be used directly. If not, the filtering must be implemented via filtered subscription queries or server-side middleware that intercepts query results before delivery. The implementation must verify that the chosen mechanism prevents unfiltered data from being observable via any query path. See REVIEW Items section.
+1. **`ctx.from` (query-builder)**: The view returns a `RowTypedQuery` built via `ctx.from.tableName.where(row => ...)`. At call time, `ctx.sender` and other parameters are captured as SQL literals in the emitted query string (e.g., `SELECT * FROM "snake_states" WHERE ...`). The runtime receives the result as `ViewResult::RawSql`. Currently, the runtime re-runs the full SQL query whenever dependent tables change. However, `ctx.from` queries are structurally compatible with SpacetimeDB's planned incremental view maintenance (IVM) infrastructure — the same IVM that already supports user-defined SQL subscriptions. Future optimizations are expected to enable true IVM for `ctx.from` views, including identity-partitioned materialization.
 
-#### 2.9.1 Filtering Rules
+2. **`ctx.db` (procedural)**: The view uses imperative TypeScript with `ctx.db.tableName.columnName.find()` / `.filter()`. The runtime tracks a **read set** of rows accessed via indexed lookups; when any row in the read set changes, the view function is re-executed and the output is diffed. This path is opaque to the query engine and cannot benefit from future IVM optimizations.
 
-For a querying connection C with CentaurTeam T (from `centaur_team_permissions`):
+Both paths support `ctx.sender` for per-connection filtering. **The visibility views defined below use `ctx.from` for forward compatibility with planned IVM optimizations.** With the expected subscriber count (2–6 teams), either path would perform adequately today, but `ctx.from` is the better long-term choice.
 
-**`snake_states` table**: A row is visible to C if:
-- The row's `centaurTeamId === T` (allied snake — always visible, including `visible = false` so the client can render the invisibility indicator [04-REQ-050]), OR
-- The row's `visible === true` (visible to all CentaurTeams).
-- Spectator connections (T = null) see only rows with `visible === true`.
+**Invisibility principle**: Invisibility of a snake does not imply that the effects the snake has on the game board are invisible to observers. Only the `snake_states` rows for invisible opponent snakes are hidden by visibility filtering. Items consumed by an invisible snake still disappear normally for all observers. Turn events are visible to all connections regardless of the acting snake's visibility. The invisible snake's own state record is the sole datum filtered — nothing more.
 
-**`turn_events` table**: Visible to all connections. Turn events describe game-board effects (items consumed, snakes dying, movement outcomes) and are not filtered based on snake visibility. Per the invisibility principle, only the snake's own state record is hidden — not the observable consequences of its actions.
+#### 2.9.1 View Definitions
 
-**`item_lifetimes` table**: Visible to all connections. Item consumption (an invisible snake eating food or collecting a potion) is a game-board effect visible to all observers. The item's `destroyedTurn` is shown as-is regardless of the consuming snake's visibility.
+**`snake_states_view`** (`ViewContext` query-builder view over `snake_states`):
 
-**`staged_moves` table**: A row is visible to C only if the connection's `centaurTeamId` matches the snake's owning CentaurTeam (derived from `snake_states`). Staged moves are the most sensitive data in the STDB instance — they reveal what competitors are planning before the turn resolves. No connection may read another CentaurTeam's staged moves. Spectator connections see no staged-move rows.
+The view uses `ctx.from` to build a SQL query that filters `snake_states` based on the caller's CentaurTeam. Semantically, the emitted query is equivalent to:
 
-**`centaur_team_permissions` table**: Not visible to client connections. Connection-to-CentaurTeam mappings are internal attribution data with no legitimate client use case. The privileged replay-export caller (Convex) reads this table at game end; no other caller requires access.
+```sql
+SELECT * FROM snake_states
+WHERE centaurTeamId = (
+    SELECT centaurTeamId FROM centaur_team_permissions
+    WHERE identity = :ctx_sender
+  )
+  OR visible = true
+```
 
-**`game_config`, `board_state`, `centaur_team_roster`, `game_runtime`, `turns`, `time_budget_states`**: Visible to all connections. No snake-identity-sensitive data.
+Filtering semantics:
+- Allied snakes (`centaurTeamId` matches the caller's CentaurTeam) are always visible, including rows with `visible = false` so the client can render the invisibility indicator [04-REQ-050].
+- Opponent snakes with `visible = true` are visible to all CentaurTeams.
+- Spectator connections (no `centaur_team_permissions` row for `ctx.sender`) see only rows with `visible === true` — the subquery yields no match, so only the `OR visible = true` branch returns rows.
 
-#### 2.9.2 Historical Query Filtering
+Clients subscribe to `snake_states_view` instead of the raw `snake_states` table for all subscription patterns in Section 2.12.
 
-Visibility filtering applies to historical queries with the same predicates [04-REQ-048]. A client scrubbing backward to turn T observes the snake's visibility state as it was at turn T's boundary. The denormalized `visible` column on `snake_states` makes this a direct predicate check without replaying game logic.
+**`staged_moves_view`** (`ViewContext` query-builder view over `staged_moves`):
 
-#### 2.9.3 Visibility Transitions
+The view uses `ctx.from` to build a SQL query that restricts `staged_moves` to the caller's CentaurTeam. Semantically, the emitted query is equivalent to:
+
+```sql
+SELECT sm.* FROM staged_moves sm
+WHERE EXISTS (
+    SELECT 1 FROM snake_states ss
+    WHERE ss.snakeId = sm.snakeId
+      AND ss.centaurTeamId = (
+          SELECT centaurTeamId FROM centaur_team_permissions
+          WHERE identity = :ctx_sender
+      )
+)
+```
+
+(`centaurTeamId` is turn-invariant for any given snake — it is assigned at game initialization and never changes — so matching any `snake_states` row for the snake yields the correct team.)
+
+Filtering semantics:
+- A `staged_moves` row is visible only if the snake belongs to the caller's CentaurTeam.
+- Spectator connections (no `centaur_team_permissions` row for `ctx.sender`) see no `staged_moves` rows — the inner subquery yields no match.
+
+Staged moves are the most sensitive data in the STDB instance — they reveal what competitors are planning before the turn resolves. No connection may read another CentaurTeam's staged moves.
+
+Clients subscribe to `staged_moves_view` instead of the raw `staged_moves` table.
+
+**`centaur_team_permissions` — private table (no view)**:
+
+The `centaur_team_permissions` table is declared as **private** (omitting `public: true` in the table decorator). Private tables are invisible to all client subscriptions — no client can subscribe to or query this table. Connection-to-CentaurTeam mappings are internal attribution data with no legitimate client use case. The module owner (Convex, authenticated with a management JWT) bypasses private-table restrictions and reads this table at game end for replay export; no other caller requires access.
+
+**Unfiltered public tables** (no view needed):
+
+`turn_events`, `item_lifetimes`, `game_config`, `board_state`, `centaur_team_roster`, `game_runtime`, `turns`, `time_budget_states` — remain public tables. Clients subscribe directly to these tables. Turn events describe game-board effects and are not filtered based on snake visibility. Item consumption is a game-board effect visible to all observers. Per the invisibility principle, only the snake's own state record is hidden — not the observable consequences of its actions.
+
+#### 2.9.2 Required Indexes for View Query Performance
+
+The `ctx.from` query-builder views emit SQL queries with WHERE clauses and subqueries. The following btree indexes are required for efficient query execution and to support future IVM optimization:
+
+| Index | Table | Column(s) | Purpose |
+|-------|-------|-----------|---------|
+| `centaur_team_permissions.identity` | `centaur_team_permissions` | `identity` | Subquery: resolve caller's CentaurTeam from `ctx.sender` |
+| `snake_states.centaurTeamId` | `snake_states` | `centaurTeamId` | `snake_states_view` WHERE clause: filter by CentaurTeam |
+| `snake_states.visible` | `snake_states` | `visible` | `snake_states_view` WHERE clause: filter visible opponent snakes |
+| `staged_moves.snakeId` | `staged_moves` | `snakeId` | `staged_moves_view` EXISTS subquery: join to `snake_states` |
+
+Without these indexes, the emitted SQL queries would require full table scans on every dependent-table change, degrading performance proportionally to table size.
+
+#### 2.9.3 Historical Query Filtering
+
+Visibility filtering applies to historical queries with the same predicates [04-REQ-048]. A client scrubbing backward to turn T observes the snake's visibility state as it was at turn T's boundary. The denormalized `visible` column on `snake_states` makes this a direct predicate check without replaying game logic. Because clients subscribe to `snake_states_view`, historical queries are automatically filtered by the view's logic.
+
+#### 2.9.4 Visibility Transitions
 
 When a snake's visibility changes at a turn boundary (effect applied, cancelled, or expired in Phase 9), the filtering transition is immediate at that boundary [04-REQ-051]:
-- Invisible → visible: the snake appears in the opponent's next subscription update.
-- Visible → invisible: the snake vanishes from the opponent's next subscription update.
+- Invisible → visible: the snake appears in the opponent's next subscription update (the view's SQL query is re-run against the updated `snake_states` table, and the newly visible row appears in the diff).
+- Visible → invisible: the snake vanishes from the opponent's next subscription update (the re-run query omits the now-invisible row, producing a deletion diff).
 
-#### 2.9.4 Replay-Export Exemption
+#### 2.9.5 Replay-Export Exemption
 
-The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all RLS [04-REQ-064]. The complete unfiltered historical record is returned — including invisible snakes' `snake_states` rows, `staged_moves` (if any remain at export time), and `centaur_team_permissions` — for downstream replay systems that render per-CentaurTeam perspectives.
+The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all visibility filtering [04-REQ-064]. The module owner, authenticated via management JWT, has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (such as unfiltered `snake_states` and `staged_moves`). This is a built-in SpacetimeDB capability requiring no additional design. The complete unfiltered historical record is returned for downstream replay systems that render per-CentaurTeam perspectives.
 
 ---
 
@@ -866,7 +922,7 @@ After game-end detection and notification, Convex retrieves the complete histori
 8. `time_budget_states` — all per-turn per-CentaurTeam budget records.
 9. `turn_events` — all turn events across all turns.
 
-**RLS bypass** [04-REQ-064]: The replay-export queries bypass all RLS. The management JWT identifies the caller as the privileged Convex platform runtime, which is exempt from RLS. The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and any residual `staged_moves` — is returned.
+**Visibility filtering bypass** [04-REQ-064]: The replay-export queries bypass all visibility filtering. The management JWT identifies the caller as the module owner (Convex platform runtime), which has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (bypassing `snake_states_view` and `staged_moves_view`). The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and any residual `staged_moves` — is returned.
 
 **Data completeness**: The exported record is sufficient to reconstruct a complete replay of the game [04-REQ-012]. Because `stagedBy` fields already carry `agentId` values (resolved at connection time per 04-REQ-020), no Identity→agent resolution step is required during export [04-REQ-061].
 
@@ -880,44 +936,46 @@ After game-end detection and notification, Convex retrieves the complete histori
 
 Satisfies 04-REQ-053 through 04-REQ-058.
 
-SpacetimeDB's subscription system delivers incremental updates to subscribed clients as table rows change. All subscriptions are subject to visibility filtering (Section 2.9) [04-REQ-055]. Turn-resolution commits are delivered as a single logical update corresponding to the atomic transaction [04-REQ-056].
+SpacetimeDB's subscription system delivers incremental updates to subscribed clients as table rows change. All subscriptions are subject to visibility filtering (Section 2.9) [04-REQ-055]: for tables with visibility Views (`snake_states`, `staged_moves`), clients subscribe to the corresponding view (`snake_states_view`, `staged_moves_view`) rather than the raw table. For unfiltered public tables, clients subscribe directly. Turn-resolution commits are delivered as a single logical update corresponding to the atomic transaction [04-REQ-056].
 
 #### 2.12.1 Live Current-Turn View
 
 Subscribe to:
-- `snake_states WHERE turn = game_runtime.currentTurn` — latest snake positions, health, effects.
+- `snake_states_view WHERE turn = game_runtime.currentTurn` — latest snake positions, health, effects (visibility-filtered per Section 2.9).
 - `item_lifetimes WHERE spawnTurn <= game_runtime.currentTurn AND (destroyedTurn IS NULL OR destroyedTurn > game_runtime.currentTurn)` — currently active items.
 - `board_state` — static board (initial delivery only).
 - `game_runtime` — current turn number (triggers re-evaluation of the above queries when currentTurn changes).
 - `centaur_team_turn_state` — per-CentaurTeam declaration status for clock display.
 
-When a new turn commits, the client receives updated `snake_states` and `item_lifetimes` rows for the new turn, plus the updated `game_runtime.currentTurn`.
+When a new turn commits, the client receives updated `snake_states_view` and `item_lifetimes` rows for the new turn, plus the updated `game_runtime.currentTurn`.
 
 #### 2.12.2 Historical Scrubbing
 
 Point-in-time query by turn number T:
-- `snake_states WHERE turn = T` — snake states at turn T boundary.
+- `snake_states_view WHERE turn = T` — snake states at turn T boundary (visibility-filtered per Section 2.9).
 - `item_lifetimes WHERE spawnTurn <= T AND (destroyedTurn IS NULL OR destroyedTurn > T)` — items present at turn T.
 - `time_budget_states WHERE turn = T` — CentaurTeam budgets at turn T.
 - `turn_events WHERE turn = T` — events from turn T's resolution.
 
-All subject to RLS [04-REQ-048]. No game logic re-execution required [04-REQ-058].
+All subject to visibility filtering via Views (Section 2.9) [04-REQ-048]. No game logic re-execution required [04-REQ-058].
 
 #### 2.12.3 Turn-Transition Animation
 
 To animate the transition from turn T to turn T+1:
-- Subscribe to `snake_states WHERE turn = T+1` — post-resolution snake positions.
+- Subscribe to `snake_states_view WHERE turn = T+1` — post-resolution snake positions (visibility-filtered).
 - Subscribe to `turn_events WHERE turn = T+1` — events that describe the transition.
 - Client uses the events to animate intermediate states (movement paths, deaths, item pickups) before settling on the T+1 snapshot.
 
 #### 2.12.4 Full-Game Catch-Up
 
 A client connecting mid-game subscribes to all historical tables:
-- `snake_states` (all turns) — initial bulk delivery of all historical snapshots.
+- `snake_states_view` (all turns) — initial bulk delivery of all historical snapshots (visibility-filtered per Section 2.9).
 - `item_lifetimes` (all rows) — complete item history.
 - `turns` (all rows) — turn timing.
 - `time_budget_states` (all turns) — budget history.
 - `turn_events` (all turns) — complete event history.
+
+Clients must never subscribe directly to raw `snake_states` or `staged_moves` tables — only the corresponding visibility Views are permitted for client subscriptions.
 
 SpacetimeDB delivers the initial snapshot as a bulk delivery, then switches to incremental updates as new turns commit. The client can render from turn 0 forward or jump to the current turn.
 
@@ -1099,13 +1157,13 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 
 2. **[05] must implement a game-end notification HTTP action endpoint.** The endpoint receives `GameEndNotification` (Section 3.3) and triggers game-end orchestration. It must authenticate the caller by validating the Convex-signed callback token presented as a Bearer token.
 
-3. **[05] must retrieve the complete historical record at game end.** Convex calls the STDB instance's HTTP API to read all tables (Section 2.11). The retrieval bypasses RLS and returns the complete unfiltered record including invisible snakes.
+3. **[05] must retrieve the complete historical record at game end.** Convex calls the STDB instance's HTTP API to read all tables (Section 2.11). The module owner bypasses all visibility filtering (including private tables and raw tables behind Views) and returns the complete unfiltered record including invisible snakes.
 
 4. **[05] must store the WASM binary in Convex file storage and use it for provisioning.** The binary is uploaded by the build pipeline and retrieved at game-creation time for the single-step `POST /v1/database` provisioning (Section 3.4).
 
 5. **[08] must handle all 10 turn event kinds in its renderers.** The closed event set (Section 3.2) includes `hazard_damage` as a module 04 addition beyond [01]'s 9-kind set. The canonical ordering is derivable from event data per the deterministic rules in §2.8.
 
-6. **[08] must design subscription queries per Section 2.12.** The four subscription patterns (live view, historical scrubbing, turn-transition animation, full-game catch-up) define the client-side data access contract. All subscriptions are subject to RLS filtering.
+6. **[08] must design subscription queries per Section 2.12.** The four subscription patterns (live view, historical scrubbing, turn-transition animation, full-game catch-up) define the client-side data access contract. All subscriptions are subject to visibility filtering: for `snake_states` and `staged_moves`, clients must subscribe to the corresponding visibility Views (`snake_states_view`, `staged_moves_view`) rather than the raw tables. Other tables are subscribed to directly.
 
 7. **[05] must pass the game seed to `initialize_game`.** The game seed is generated by Convex during `generateBoardAndInitialState()` and must be forwarded to STDB for per-turn seed derivation. This extends the parameter set of [02] §3.4's `SpacetimeDbInstanceLifecycle.provision.inputFromConvex`.
 
@@ -1393,7 +1451,7 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 
 ---
 
-### 04-REVIEW-018: SpacetimeDB TypeScript SDK RLS capabilities — **OPEN**
+### 04-REVIEW-018: SpacetimeDB TypeScript SDK RLS capabilities — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Design
@@ -1404,6 +1462,10 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 - B: Filtered subscription queries where each client subscribes with a CentaurTeam-specific WHERE clause, and the server enforces that clients can only subscribe to queries appropriate for their CentaurTeam.
 - C: Application-level middleware that intercepts query results and applies the filtering logic before delivery.
 **Informal spec reference**: §10 (schema), [02-REQ-010].
+
+**Decision**: None of the original options. SpacetimeDB 2.0 offers **Views** as the officially recommended replacement for declarative RLS (`clientVisibilityFilter`). Views are server-side functions defined in TypeScript that clients subscribe to like tables. Two `ViewContext` views (`snake_states_view`, `staged_moves_view`) implement per-connection visibility filtering using the **`ctx.from` query-builder path**, while `centaur_team_permissions` is made a private table invisible to all client subscriptions.
+**Rationale**: SpacetimeDB's declarative `clientVisibilityFilter` (Option A) exists but is marked experimental/unstable, has a known bug with subscription joins (GitHub #2810), and SpacetimeDB docs explicitly recommend Views over RLS. Option B (filtered subscription queries) would leak the responsibility for correct filtering to the client, violating 04-REQ-047's "data layer" enforcement. Option C (application-level middleware) has no clean integration point in SpacetimeDB's architecture. Views provide full programmatic control in TypeScript with `ctx.sender` for identity-dependent filtering — satisfying all filtering requirements without relying on unstable APIs. The `ctx.from` query-builder path is chosen over the `ctx.db` procedural path because `ctx.from` emits SQL that is structurally compatible with SpacetimeDB's planned incremental view maintenance (IVM) infrastructure, enabling future identity-partitioned materialization. Both paths currently re-execute on dependent-table changes, but `ctx.from` is the forward-compatible choice. With the expected subscriber count (2–6 teams), performance is adequate either way; btree indexes on `centaur_team_permissions.identity`, `snake_states.centaurTeamId`, `snake_states.visible`, and `staged_moves.snakeId` ensure efficient query execution.
+**Affected requirements/design elements**: Section 2.9 rewritten from "Visibility Filtering (RLS) Design" to "Visibility Filtering via SpacetimeDB Views." Section 2.11 replay-export bypass updated from "RLS bypass" to "Visibility filtering bypass" referencing module-owner access to private tables and raw tables behind views. Section 2.12 updated to note that clients subscribe to view names for filtered tables. Section 3.5 obligation 6 updated to reference visibility Views. No requirements changed — 04-REQ-047 through 04-REQ-052 and 04-REQ-055 are mechanism-agnostic and satisfied by the View implementation as-is.
 
 ---
 
