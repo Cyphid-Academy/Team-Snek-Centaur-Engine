@@ -438,7 +438,7 @@ Satisfies 02-REQ-034 through 02-REQ-037.
 ```typescript
 export {
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, CentaurTeamDocId, OperatorId,
+  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, OperatorId,
   Agent, BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
   PotionEffect, SnakeState, ItemState, Board, CentaurTeamClockState,
   GameConfig, GameOutcome, TurnEvent, DeathCause,
@@ -636,7 +636,7 @@ The shared engine codebase re-exports all of Module 01's exported interfaces (Se
 export {
   // Enums and branded types (01 §3.1)
   Direction, CellType, ItemType, BoardSize, EffectFamily, EffectState,
-  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, CentaurTeamDocId, OperatorId, Agent,
+  Cell, SnakeId, CentaurTeamId, ItemId, TurnNumber, OperatorId, Agent,
   BOARD_DIMENSIONS, invulnerabilityLevel, isVisible,
 
   // State shapes (01 §3.2)
@@ -758,7 +758,7 @@ export interface SpectatorConnectionModel {
 export interface SnekCentaurServerConnectionModel {
   readonly spacetimeDb: {
     readonly transport: 'WebSocket (one per hosted Centaur Team)'
-    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: centaur:{centaurTeamDocId})'
+    readonly authMechanism: 'RS256-signed JWT validated via OIDC (sub: centaur:{centaurTeamId})'
     readonly capabilities: readonly ['subscribe_game_state', 'stage_move', 'declare_turn_over']
   }
   readonly convex: {

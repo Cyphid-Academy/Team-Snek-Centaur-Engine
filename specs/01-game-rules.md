@@ -265,7 +265,7 @@ export interface Cell { readonly x: number; readonly y: number }
 // Branded ID types so that SnakeId, CentaurTeamId, ItemId, and TurnNumber cannot be
 // accidentally mixed at call sites.
 export type SnakeId    = number & { readonly __brand: 'SnakeId' }
-export type CentaurTeamId     = number & { readonly __brand: 'CentaurTeamId' }
+export type CentaurTeamId     = string & { readonly __brand: 'CentaurTeamId' }
 export type ItemId     = number & { readonly __brand: 'ItemId' }
 export type TurnNumber = number & { readonly __brand: 'TurnNumber' }
 
@@ -950,22 +950,21 @@ export type EffectState  = 'buff' | 'debuff'
 export interface Cell { readonly x: number; readonly y: number }
 
 export type SnakeId    = number & { readonly __brand: 'SnakeId' }
-export type CentaurTeamId     = number & { readonly __brand: 'CentaurTeamId' }
+export type CentaurTeamId     = string & { readonly __brand: 'CentaurTeamId' }
 export type ItemId     = number & { readonly __brand: 'ItemId' }
 export type TurnNumber = number & { readonly __brand: 'TurnNumber' }
-export type CentaurTeamDocId = string & { readonly __brand: 'CentaurTeamDocId' }
 export type OperatorId    = string & { readonly __brand: 'OperatorId' }
 
 // Agent: the actor that staged a move. Module 01 distinguishes two kinds —
 // CentaurTeam (a Centaur Team's bot acting on the team's collective behalf,
 // incorporating human and AI heuristics) and Operator (an individual human
 // member of a Centaur Team, identified via Google OAuth).
-// The `CentaurTeamDocId` and `OperatorId` id spaces are disjoint and opaque to
+// The `CentaurTeamId` and `OperatorId` id spaces are disjoint and opaque to
 // module 01; the mapping from a concrete deployment identity (e.g. module
 // 04's SpacetimeDB `Identity`) to an `Agent` is owned by the downstream
 // module that has visibility into that identity namespace.
 export type Agent =
-  | { readonly kind: 'centaur_team'; readonly centaurTeamDocId: CentaurTeamDocId }
+  | { readonly kind: 'centaur_team'; readonly centaurTeamId: CentaurTeamId }
   | { readonly kind: 'operator';    readonly operatorId: OperatorId }
 
 export const BOARD_DIMENSIONS: Readonly<Record<BoardSize, { total: number; playable: number }>>
@@ -1426,7 +1425,7 @@ The rename from "interaction" to "disruption" reflects the narrower class: viole
 - C: Move `TurnEvent` ownership out of module 01 entirely and into module 04. Module 01 would only enumerate the *names* of event types in 01-REQ-052; the schemas would live where `Identity` is reachable.
 **Informal spec reference**: §14, §13.3.
 
-**Decision**: None of A/B/C as originally posed — a new option (D) was introduced and chosen. Module 01 defines a local `Agent` concept that abstracts over the two kinds of actor that can stage a move in this project: a **Centaur Team** (a Centaur Team's bot acting on the team's collective behalf, incorporating human and AI heuristics) and an **Operator** (an individual human member of a Centaur Team, identified via Google OAuth). These represent different granularities of agency attribution: a Centaur Team-level move is the product of the team's collective intelligence pipeline, while an operator-level move is uniquely attributed to that individual sub-agent of the team. `Agent` is a discriminated union over `{kind: 'centaur_team', centaurTeamDocId: CentaurTeamDocId}` and `{kind: 'operator', operatorId: OperatorId}`, with `CentaurTeamDocId` and `OperatorId` as opaque branded types owned by module 01. Both are string-based: `CentaurTeamDocId = string & { readonly __brand: 'CentaurTeamDocId' }` and `OperatorId = string & { readonly __brand: 'OperatorId' }`, reflecting that the concrete values are Convex record `_id`s (see resolved 03-REVIEW-011). The `snake_moved` event carries `stagedBy: Agent | null` (null only when Phase 1 fell through to `lastDirection` or the turn-0 random pick). `resolveTurn`'s `stagedMoves` input is correspondingly retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>` where `StagedMove = {direction, stagedBy}`. Downstream modules that see a concrete identity type (module 04's SpacetimeDB `Identity`, in particular) are responsible for mapping that identity onto an `Agent` variant before calling `resolveTurn` — module 01 never interprets the ids, it just threads them through into the event.
+**Decision**: None of A/B/C as originally posed — a new option (D) was introduced and chosen. Module 01 defines a local `Agent` concept that abstracts over the two kinds of actor that can stage a move in this project: a **Centaur Team** (a Centaur Team's bot acting on the team's collective behalf, incorporating human and AI heuristics) and an **Operator** (an individual human member of a Centaur Team, identified via Google OAuth). These represent different granularities of agency attribution: a Centaur Team-level move is the product of the team's collective intelligence pipeline, while an operator-level move is uniquely attributed to that individual sub-agent of the team. `Agent` is a discriminated union over `{kind: 'centaur_team', centaurTeamId: CentaurTeamId}` and `{kind: 'operator', operatorId: OperatorId}`, with `CentaurTeamId` and `OperatorId` as opaque branded types owned by module 01. Both are string-based: `CentaurTeamId = string & { readonly __brand: 'CentaurTeamId' }` and `OperatorId = string & { readonly __brand: 'OperatorId' }`, reflecting that the concrete values are Convex record `_id`s (see resolved 03-REVIEW-011). The `snake_moved` event carries `stagedBy: Agent | null` (null only when Phase 1 fell through to `lastDirection` or the turn-0 random pick). `resolveTurn`'s `stagedMoves` input is correspondingly retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>` where `StagedMove = {direction, stagedBy}`. Downstream modules that see a concrete identity type (module 04's SpacetimeDB `Identity`, in particular) are responsible for mapping that identity onto an `Agent` variant before calling `resolveTurn` — module 01 never interprets the ids, it just threads them through into the event.
 
 **Rationale for rejecting the originally-posed options**:
 
@@ -1438,13 +1437,13 @@ The framing of the original question ("is team-level attribution sufficient?") w
 
 **Scope of change**:
 
-- **Section 3.1 (Enums and Branded Types)**: added `CentaurTeamDocId`, `OperatorId` branded types (string-based, values are Convex record `_id`s per resolved 03-REVIEW-011) and the `Agent` discriminated union.
-- **Section 2.11 (Turn Event Schema)**: `snake_moved.stagedByCentaurTeamId: CentaurTeamId | null` replaced by `stagedBy: Agent | null`; inline comment explains that team attribution is derivable from `snakeId` and so is not duplicated on the event.
+- **Section 3.1 (Enums and Branded Types)**: `CentaurTeamId` is now a string-branded type (the Convex `centaur_teams._id`); `OperatorId` is a string-branded type (values are Convex record `_id`s per resolved 03-REVIEW-011); the `Agent` discriminated union uses `centaurTeamId: CentaurTeamId`.
+- **Section 2.11 (Turn Event Schema)**: `snake_moved.stagedBy: Agent | null` carries the full agent attribution; inline comment explains that team attribution is derivable from `snakeId` and so is not duplicated on the event.
 - **Section 2.11 scoping note**: rewritten to describe the Agent-based resolution instead of the original CentaurTeamId fallback.
 - **Section 3.8 (Entry Points)**: `resolveTurn`'s `stagedMoves` parameter retyped from `ReadonlyMap<SnakeId, Direction>` to `ReadonlyMap<SnakeId, StagedMove>`, with `StagedMove = {direction, stagedBy: Agent}` added as an exported interface.
 - **Section 2.8 (Turn Resolution Pipeline) — Phase 1 pseudocode**: each `moves[snakeId]` entry now carries `{direction, stagedBy}` where `stagedBy` is `null` in the lastDirection and turn-0 random fallback branches. Phase 2 reads `moves[snakeId].direction`; Phase 11's emission of `snake_moved` reads `moves[snakeId].stagedBy`.
 
-**Downstream impact**: Module 04's deployment-time mapping `Identity → Agent` is now a hard dependency. Its implementation must cover both kinds: Google-authenticated users map to `{kind: 'operator', operatorId}`, and Centaur Team bot connections map to `{kind: 'centaur_team', centaurTeamDocId}`. The id-space discipline (disjoint `CentaurTeamDocId` and `OperatorId` spaces) is owned by whichever module populates the mapping — module 01 does not enforce it.
+**Downstream impact**: Module 04's deployment-time mapping `Identity → Agent` is now a hard dependency. Its implementation must cover both kinds: Google-authenticated users map to `{kind: 'operator', operatorId}`, and Centaur Team bot connections map to `{kind: 'centaur_team', centaurTeamId}`. The id-space discipline (disjoint `CentaurTeamId` and `OperatorId` spaces) is owned by whichever module populates the mapping — module 01 does not enforce it.
 
 **Revisit if**: the platform introduces a third class of staging actor (e.g. an external API bot that is neither a Centaur Server nor an authenticated human). The `Agent` union would then need a third variant, which is a module-01 version bump.
 
