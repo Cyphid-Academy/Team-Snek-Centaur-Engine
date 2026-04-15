@@ -189,9 +189,9 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-060**: After a win condition has been detected in Phase 10 of some turn `T_end` ([01-REQ-051], [01-REQ-054] through [01-REQ-057]), the runtime shall treat the game as **ended** for gameplay purposes: further move-staging and turn-declaration operations shall be rejected, and no further turns shall be resolved. Game-end rejection begins at the moment the final turn's transaction commits. In-flight staged moves or turn-declaration operations arriving after the commit of turn `T_end` shall be rejected as "game over" — there is no grace window between commit and enforcement.
 
-**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the per-game seed ([01-REQ-059], [01-REQ-060]) so that downstream systems can verify deterministic reproducibility per 04-REQ-069 (see 04-REVIEW-013; [01-REQ-059]'s "game client" exclusion does not apply to the privileged Convex replay-export caller authenticated per [03-REQ-048]), the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4. Because `stagedBy` fields already carry `Agent` values (resolved at registration time per 04-REQ-020), no Identity→email/CentaurTeam-reference resolution step is required during replay export; the exported record already contains Convex-interpretable `Agent` values throughout. Retrieval is performed by Convex authenticated per [03-REQ-048]. The retrieval pattern — Convex-pull via HTTP action, runtime-push to a Convex endpoint, or the record being bundled into the game-end notification payload of 04-REQ-061a — is a Phase 2 Design concern; any such mechanism is permitted provided the requirements of this section are satisfied. (See also [03-REQ-045].)
+**04-REQ-061**: After game-end detection, the runtime shall make the complete historical record available to Convex for replay persistence ([05-REQ-040]). The complete record comprises the static board layout (as received from Convex at init time), the dynamic gameplay parameters seeded at initialisation, the per-game seed ([01-REQ-059], [01-REQ-060]) so that downstream systems can verify deterministic reproducibility per 04-REQ-069 (see 04-REVIEW-013; [01-REQ-059]'s "game client" exclusion does not apply to the privileged Convex replay-export caller authenticated per [03-REQ-048]), the full per-turn historical record of snake states (04-REQ-006), the full item-lifetime record (04-REQ-007), the full per-turn time-budget record (04-REQ-009), the full turn-timing record (04-REQ-010), the full turn-event record (04-REQ-011), and the participant attribution record of Section 4.4. Because `stagedBy` fields already carry `Agent` values (resolved at registration time per 04-REQ-020), no Identity→email/CentaurTeam-reference resolution step is required during replay export; the exported record already contains Convex-interpretable `Agent` values throughout. The complete record shall be bundled into the `GameEndNotification` payload of [04-REQ-061a] by the `notify_game_end` scheduled procedure (see §2.10, §2.11). The callback token authenticating the notification is a Convex-signed JWT; Convex validates it by signature verification and claims checking — no stored-token comparison is required. (See also [03-REQ-045].) *(Amended per 05-REVIEW-015 resolution: retrieval pattern resolved to bundled-in-notification; Convex-pull and runtime-push alternatives removed.)*
 
-**04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance via a privileged operation authenticated per [03-REQ-048]. The notification mechanism shall use best-practice platform affordances (e.g., SpacetimeDB's webhook subscription mechanism if available, with Convex having registered its interest at game-initialisation time); specifics are a Phase 2 Design concern. The notification need not itself carry the complete historical record; its minimum obligation is to convey that the game has ended and to identify the instance.
+**04-REQ-061a**: The runtime shall notify Convex when a game has ended, consistent with [05-REQ-038]'s obligation that Convex learns of game end in order to orchestrate score display, replay persistence, teardown, and next-game preparation. Convex registers its interest in receiving such notifications for a given instance by providing a `gameEndCallbackUrl` and a `gameOutcomeCallbackToken` at init time (stored in `game_config`). The notification is sent by the `notify_game_end` scheduled procedure (§2.10) via `ctx.http.fetch()`, and carries the complete historical record bundled as `replayData` (§2.11) alongside the `GameOutcome`. *(Amended per 05-REVIEW-015 resolution: notification mechanism resolved to scheduled procedure with bundled replay data.)*
 
 **04-REQ-062**: The replay-export client shall be authenticated as the Convex platform runtime per [03-REQ-048]. The runtime shall not permit any other caller to retrieve the bulk replay export. 04 requires only that the privilege be distinct from ordinary gameplay admission; detailed credential mechanics are owned by [03].
 
@@ -875,11 +875,7 @@ When a snake's visibility changes at a turn boundary (effect applied, cancelled,
 
 #### 2.9.5 Replay-Export Exemption
 
-<<<<<<< HEAD
-The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all visibility filtering [04-REQ-064]. The module owner, authenticated via management JWT, has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (such as unfiltered `snake_states` and `staged_moves`). This is a built-in SpacetimeDB capability requiring no additional design. The complete unfiltered historical record is returned for downstream replay systems that render per-CentaurTeam perspectives.
-=======
-The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all RLS [04-REQ-064]. The complete unfiltered historical record is returned — including invisible snakes' `snake_states` rows, the complete append-only `staged_moves` history, and `centaur_team_permissions` — for downstream replay systems that render per-CentaurTeam perspectives.
->>>>>>> 793aee5 (Module 06 Phase 2 — Centaur State Design + Exported Interfaces)
+The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all visibility filtering [04-REQ-064]. The module owner, authenticated via management JWT, has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (such as unfiltered `snake_states` and the complete append-only `staged_moves` history). This is a built-in SpacetimeDB capability requiring no additional design. The complete unfiltered historical record is returned for downstream replay systems that render per-CentaurTeam perspectives.
 
 ---
 
@@ -896,9 +892,12 @@ The `game_end_notification_schedule` schedule table drives the `notify_game_end`
 The `notify_game_end` **scheduled procedure**:
 1. Reads `game_config.gameEndCallbackUrl` (the Convex HTTP action URL registered at init time).
 2. Reads `game_config.gameOutcomeCallbackToken` (the Convex-signed JWT provided at init time).
-3. Constructs the notification payload (Section 3.3).
-4. Sends an HTTP POST to `gameEndCallbackUrl` via `ctx.http.fetch()` with the notification payload as a JSON request body and the `gameOutcomeCallbackToken` as a Bearer token in the Authorization header.
-5. On HTTP failure (non-2xx response or network error): retries with exponential backoff (initial delay 1s, max 3 retries). If all retries fail, the notification is lost but the game state remains correct — Convex can detect stale games via polling as a fallback.
+3. For normal outcomes (victory, draw): reads all replay tables (Section 2.11) — `game_config`, `board_state`, `centaur_team_roster`, `centaur_team_permissions`, `turns`, `snake_states`, `item_lifetimes`, `staged_moves`, `time_budget_states`, `turn_events` — and bundles them into a `replayData` object. For error outcomes: sets `replayData` to `null`.
+4. Constructs the `GameEndNotification` payload (Section 3.3) including `replayData`.
+5. Sends an HTTP POST to `gameEndCallbackUrl` via `ctx.http.fetch()` with the notification payload as a JSON request body and the `gameOutcomeCallbackToken` as a Bearer token in the Authorization header.
+6. On HTTP failure (non-2xx response or network error): retries with exponential backoff (initial delay 1s, max 3 retries). If all retries fail, the notification is lost but the game state remains correct — Convex can detect stale games via polling as a fallback.
+
+Once Convex responds with a 2xx status, the procedure's work is complete. Convex will tear down the STDB instance using its platform-level management authority — the instance has no self-teardown capability. *(Amended per 05-REVIEW-015 resolution: replay data bundled into notification.)*
 
 **Design decision — scheduled procedure, not reducer**: The notification is sent from a scheduled **procedure** rather than a scheduled reducer. SpacetimeDB Procedures (beta) support outgoing HTTP via `ctx.http.fetch()`, whereas reducers do not have access to network I/O. Using a procedure also ensures the HTTP call is a side effect that does not participate in the triggering reducer's ACID transaction — if the HTTP call fails, the game state remains correct.
 
@@ -912,17 +911,17 @@ The `notify_game_end` **scheduled procedure**:
 
 The Convex callback endpoint validates the token by verifying the RS256 signature against its own public key (or the dedicated callback-token key pair), checking `iss`, `aud`, and `exp`, and extracting `gameId` from the `sub` claim to correlate the notification with the correct game record.
 
-**Convex callback registration**: The `gameEndCallbackUrl` is passed as a parameter to `initialize_game` and stored in `game_config`. This URL points to a Convex HTTP action endpoint that handles game-end orchestration (score display, replay persistence, teardown scheduling per [05-REQ-038]). Convex registers this URL at game-init time as part of the [05-REQ-032] orchestration per [05-REQ-032a].
+**Convex callback registration**: The `gameEndCallbackUrl` is passed as a parameter to `initialize_game` and stored in `game_config`. This URL points to a Convex HTTP action endpoint that handles game-end orchestration (score recording, replay persistence from bundled data, and immediate STDB instance teardown per [05-REQ-037], [05-REQ-038]). Convex registers this URL at game-init time as part of the [05-REQ-032] orchestration per [05-REQ-032a].
 
 ---
 
-### 2.11 Replay Export Mechanism
+### 2.11 Replay Data Bundling
 
 Satisfies 04-REQ-061 through 04-REQ-065.
 
-After game-end detection and notification, Convex retrieves the complete historical record from the STDB instance. The retrieval is a **Convex-pull** pattern: Convex initiates the data read via HTTP API calls to the SpacetimeDB instance.
+The complete historical record is bundled into the `GameEndNotification` payload by the `notify_game_end` scheduled procedure (Section 2.10). This is the **runtime-push-bundled** pattern: the STDB procedure reads all replay tables and includes them in the same HTTP POST that notifies Convex of the game outcome.
 
-**Retrieval mechanism**: Convex calls SpacetimeDB's HTTP API (`POST /v1/database/{name}/sql` or equivalent query endpoints) from a Convex HTTP action, authenticated with a management JWT per [03] §3.22. The queries read all data from:
+**Bundled tables**: The procedure reads all data from:
 
 1. `game_config` — game identifier, game seed, dynamic gameplay parameters.
 2. `board_state` — static board layout.
@@ -935,17 +934,13 @@ After game-end detection and notification, Convex retrieves the complete histori
 9. `time_budget_states` — all per-turn per-CentaurTeam budget records.
 10. `turn_events` — all turn events across all turns.
 
-<<<<<<< HEAD
-**Visibility filtering bypass** [04-REQ-064]: The replay-export queries bypass all visibility filtering. The management JWT identifies the caller as the module owner (Convex platform runtime), which has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (bypassing `snake_states_view` and `staged_moves_view`). The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and any residual `staged_moves` — is returned.
-=======
-**RLS bypass** [04-REQ-064]: The replay-export queries bypass all RLS. The management JWT identifies the caller as the privileged Convex platform runtime, which is exempt from RLS. The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and the complete append-only `staged_moves` history — is returned.
->>>>>>> 793aee5 (Module 06 Phase 2 — Centaur State Design + Exported Interfaces)
+**Visibility filtering bypass**: The procedure executes within the STDB module and reads tables directly — no visibility filtering applies. The procedure has unrestricted access to all tables including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (bypassing `snake_states_view` and `staged_moves_view`). The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and the complete append-only `staged_moves` history — is included.
 
 **Data completeness**: The exported record is sufficient to reconstruct a complete replay of the game [04-REQ-012]. Because `stagedBy` fields already carry `agentId` values (resolved at connection time per 04-REQ-020), no Identity→agent resolution step is required during export [04-REQ-061].
 
-**Instance availability** [04-REQ-063]: The STDB instance remains available (not torn down) until Convex has successfully retrieved all replay data and confirmed receipt. Teardown is a Convex-orchestrated operation per [02-REQ-021]; the instance has no self-teardown capability.
+**Instance availability** [04-REQ-063]: The STDB instance remains available (not torn down) until Convex has successfully received the bundled notification (2xx response). After Convex confirms receipt, it tears down the instance using its platform-level management authority per [02-REQ-021]; the instance has no self-teardown capability.
 
-**Design decision — Convex-pull vs runtime-push**: A Convex-pull approach is chosen over runtime-push or bundling the record in the game-end notification because (a) the complete historical record may be large (hundreds of turns × snakes), making it unsuitable for a notification payload, (b) Convex controls the timing and retry logic of the retrieval, and (c) the STDB module does not need to know how to serialize data for Convex's storage format.
+**Design decision — bundled in notification vs Convex-pull**: The replay data is bundled into the game-end notification rather than retrieved separately by Convex because (a) SpacetimeDB's Procedures (beta) support reading all tables within the module and serializing them as JSON, (b) bundling eliminates a separate Convex-pull HTTP action and the need to keep the instance alive while Convex schedules and executes the retrieval, (c) Convex can tear down the instance immediately upon confirming receipt, reducing resource consumption, and (d) the procedure runs post-commit so the data reflects the final game state. The payload size is bounded by the game's turn count and player count — for the expected game sizes (≤ 300 turns, ≤ 6 teams), the JSON payload is well within HTTP request size limits. *(Amended per 05-REVIEW-015 resolution: replaced Convex-pull with bundled notification.)*
 
 ---
 
@@ -1138,6 +1133,20 @@ interface GameEndNotification {
   readonly gameId: string
   readonly outcome: GameOutcome
   readonly finalTurn: number
+  readonly replayData: ReplayData | null
+}
+
+interface ReplayData {
+  readonly game_config: GameConfigRow
+  readonly board_state: ReadonlyArray<BoardStateRow>
+  readonly centaur_team_roster: ReadonlyArray<CentaurTeamRosterRow>
+  readonly centaur_team_permissions: ReadonlyArray<CentaurTeamPermissionsRow>
+  readonly turns: ReadonlyArray<TurnRow>
+  readonly snake_states: ReadonlyArray<SnakeStateRow>
+  readonly item_lifetimes: ReadonlyArray<ItemLifetimeRow>
+  readonly staged_moves: ReadonlyArray<StagedMoveRow>
+  readonly time_budget_states: ReadonlyArray<TimeBudgetStateRow>
+  readonly turn_events: ReadonlyArray<TurnEventRow>
 }
 
 type GameOutcome =
@@ -1150,7 +1159,9 @@ type GameOutcome =
 
 `GameOutcome` matches [01] §3.4 but uses `Record<string, number>` for scores (JSON-serializable form of `ReadonlyMap<CentaurTeamId, number>`). The `error` variant has no `scores` field (scores are meaningless for interrupted games); its `reason` field is a human-readable string describing the interruption cause. `finalTurn` is the turn number at which the terminal outcome was detected; for error cases, this is the last successfully resolved turn (may be 0 if the error occurred before any turn was resolved).
 
-**DOWNSTREAM IMPACT**: [05] must implement an HTTP action endpoint that receives this payload at the `gameEndCallbackUrl` registered during `initialize_game`. The endpoint authenticates the caller by validating the Convex-signed callback token presented as a Bearer token and triggers game-end orchestration (score recording, replay persistence, teardown scheduling). The endpoint must handle both normal outcomes (victory, draw) and error outcomes appropriately.
+`ReplayData` bundles the complete historical record from all STDB tables (Section 2.11). For normal outcomes, `replayData` is non-null and contains the full game history. For error outcomes, `replayData` is `null` (replay is not meaningful for interrupted games). The row types (`GameConfigRow`, `BoardStateRow`, etc.) are the table schemas defined in Section 2. *(Amended per 05-REVIEW-015 resolution: replay data bundled into notification.)*
+
+**DOWNSTREAM IMPACT**: [05] must implement an HTTP action endpoint that receives this payload at the `gameEndCallbackUrl` registered during `initialize_game`. The endpoint authenticates the caller by verifying the Convex-signed callback token's RS256 signature and claims (no stored-token comparison) and triggers game-end orchestration (score recording, replay persistence from the bundled `replayData`, and immediate STDB instance teardown). The endpoint must handle both normal outcomes (victory, draw) and error outcomes appropriately.
 
 ### 3.4 WASM Module Deployment Artifact Contract
 
@@ -1489,5 +1500,5 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 
 **Type**: Gap
 **Phase**: Design
-**Resolution**: Option A confirmed viable via SpacetimeDB **Procedures** (beta), which support outgoing HTTP via `ctx.http.fetch()`. However, in-module JWT signing is replaced with a Convex-pre-signed callback token to keep Convex as the sole credential issuer (03-REQ-037) and avoid crypto operations in the WASM runtime. The `notify_game_end` scheduled procedure uses `ctx.http.fetch()` for the POST and presents the Convex-signed game-outcome callback token as a Bearer header. No crypto operations in the WASM runtime. See rewritten §2.10.
-**Decision summary**: Reducers cannot make HTTP calls, but Procedures can. The game-end notification is implemented as a scheduled procedure (`notify_game_end`) triggered via the `game_end_notification_schedule` schedule table. Authentication uses a Convex-signed JWT (game-outcome callback token) provisioned at init time, not an in-module-constructed JWT.
+**Resolution**: Option A confirmed viable via SpacetimeDB **Procedures** (beta), which support outgoing HTTP via `ctx.http.fetch()`. However, in-module JWT signing is replaced with a Convex-pre-signed callback token to keep Convex as the sole credential issuer (03-REQ-037) and avoid crypto operations in the WASM runtime. The `notify_game_end` scheduled procedure uses `ctx.http.fetch()` for the POST and presents the Convex-signed game-outcome callback token as a Bearer header. The procedure also reads all replay tables and bundles the complete historical record into the notification payload (see §2.11), enabling Convex to tear down the instance immediately upon receipt. No crypto operations in the WASM runtime. See rewritten §2.10 and §2.11.
+**Decision summary**: Reducers cannot make HTTP calls, but Procedures can. The game-end notification is implemented as a scheduled procedure (`notify_game_end`) triggered via the `game_end_notification_schedule` schedule table. Authentication uses a Convex-signed JWT (game-outcome callback token) provisioned at init time, not an in-module-constructed JWT. The procedure bundles the complete replay data into the notification payload. *(Amended per 05-REVIEW-015 resolution.)*

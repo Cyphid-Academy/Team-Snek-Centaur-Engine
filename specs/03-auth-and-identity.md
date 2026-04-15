@@ -145,11 +145,11 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 ### 3.9 Platform HTTP API Authorization
 
-**03-REQ-033**: The platform's HTTP API ([05], informal spec Section 12) shall authorize each request by a bearer API key presented in the request's authorization header. API keys shall be created by authenticated humans via the Snek Centaur Server web application and shall be revocable.
+**03-REQ-033**: The platform's HTTP API ([05], informal spec Section 12) shall authorize each request by a bearer API key presented in the request's authorization header. API keys shall be created by admin users only (per [05-REQ-045]) via the Snek Centaur Server web application and shall be revocable. *(Amended per 05-REVIEW-004 resolution: creation restricted to admin users.)*
 
 **03-REQ-034**: API keys shall be stored by the platform only in a form from which the original key cannot be recovered (e.g., as a one-way hash). The plaintext of a newly created API key shall be shown to its creator exactly once, at creation time.
 
-**03-REQ-035**: Each API key shall be bound to the human identity that created it, and its authorization scope shall be no broader than the actions that human would be permitted to take through the web application UI, subject to any additional scope restrictions owned by [05].
+**03-REQ-035**: Each API key shall be bound to the human identity that created it (who must be an admin per [03-REQ-033]). Because API keys are restricted to admin users, the authorization scope of every valid API key is global (admin-level). No per-user scope bounding or live scope resolution is required. *(Amended per 05-REVIEW-004 resolution: admin-only keys have inherently global scope, replacing the original per-user scope-bounding mechanism.)*
 
 **03-REQ-036** *(negative)*: API keys shall not authorize the creation of new human identities, and shall not authorize any action that requires Google OAuth interaction.
 
@@ -291,7 +291,7 @@ interface GameCredentialClaims {
 - `centaurTeamId`: The Convex document ID of the Centaur Team (as a string). This value IS the `centaurTeamId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`) — the JWT claim and the `Agent` field are the same Convex `_id`.
 - `gameId`: The Convex document ID of the game (as a string).
 - `iat`: Issuance timestamp (Unix seconds).
-- `exp`: Expiry timestamp. Set to `iat + 7200` (2 hours). The JWT `exp` claim is **not the primary expiry mechanism**. The primary mechanism is Convex checking `game.status === 'playing'` on every request authenticated by this credential — a request against a finished or not-started game is rejected regardless of JWT validity. The 2-hour lifetime is far longer than any game will last and offers sufficient buffer to avoid re-issuing tokens during a game. The primary enforcement of the credential's temporal scope is STDB instance teardown and Convex game-status checks (`game.status === 'playing'`), not JWT expiry. The `exp` claim serves as defense-in-depth: if the credential is leaked, the 2-hour window bounds the exposure. The game credential's effective lifetime is bounded to the game per 03-REQ-058 — it becomes useless (rejected by Convex) as soon as the game transitions out of `playing` status, regardless of the JWT's `exp` timestamp.
+- `exp`: Expiry timestamp. Set to `iat + 7200` (2 hours). The JWT `exp` claim is **not the primary expiry mechanism**. The primary mechanism is Convex checking `game.status === 'playing'` on every request authenticated by this credential — a request against a finished or not-started game is rejected regardless of JWT validity. The 2-hour lifetime is far longer than any game will last and offers sufficient buffer to avoid re-issuing tokens during a game. The primary enforcement of the credential's temporal scope is STDB instance teardown and Convex game-status checks (`game.status === 'playing'`), not JWT expiry. The `exp` claim serves as defense-in-depth: if the credential is leaked, the 2-hour window bounds the exposure. The game credential's effective lifetime is bounded to the game per 03-REQ-058 — it becomes useless (rejected by Convex) as soon as the game transitions out of `playing` status, regardless of the JWT's `exp` timestamp. *(Amended per 05-REVIEW-012 resolution: reduced from 7 days to 2 hours.)*
 
 **Convex Auth integration**. The Convex Auth configuration includes a `customJwt` provider named `"gameCredential"`. When a Snek Centaur Server presents the JWT as a bearer token via the Convex client, Convex Auth validates the signature against the configured public key and makes the claims available via `auth.getUserIdentity()`. The `resolveIdentity` helper (Section 3.13) detects game credentials by the presence of the `centaurTeamId` claim.
 
@@ -564,7 +564,7 @@ interface ApiKeyRecord {
 4. Rejects if not found, or if `revokedAt` is non-null.
 5. If valid, resolves the `ownerEmail` to load the owner's identity for authorization checks.
 
-**Scope binding** (03-REQ-035). Each API key inherits the authorization scope of its creator. The HTTP API handler treats the request as if the owner were making it through the web application UI. No API key can perform actions the owner could not perform interactively.
+**Scope binding** (03-REQ-035). Because API keys are restricted to admin users (03-REQ-033), every valid API key has global (admin-level) authorization scope. The HTTP API handler verifies that the key's creator is still an admin on each request; if the creator has been removed from the admin list, the key is effectively non-functional. No per-user scope resolution or live permission inheritance is required. *(Amended per 05-REVIEW-004 resolution.)*
 
 **API keys do not authorize identity creation or OAuth actions** (03-REQ-036). API keys cannot create new user accounts (which requires Google OAuth) or perform any action that inherently requires an interactive OAuth flow.
 
@@ -666,7 +666,7 @@ interface GameCredentialClaims {
 function issueGameCredential(centaurTeamId: string, gameId: string): string
 ```
 
-`issueGameCredential` is a Convex-internal function (not an HTTP endpoint). It constructs and signs the JWT. Called by [05]'s game-start orchestration logic. The `exp` claim is set to `iat + 7200` (2 hours). The 2-hour lifetime is far longer than any game will last and offers sufficient buffer to avoid re-issuing tokens during a game. The primary enforcement of the credential's temporal scope is STDB instance teardown and Convex game-status checks (`game.status === 'playing'`), not JWT expiry — the `exp` claim serves as defense-in-depth. The effective credential lifetime is bounded to the game's `playing` status per 03-REQ-058 — Convex rejects all requests against non-playing games regardless of JWT validity.
+`issueGameCredential` is a Convex-internal function (not an HTTP endpoint). It constructs and signs the JWT. Called by [05]'s game-start orchestration logic. The `exp` claim is set to `iat + 7200` (2 hours) as a defensive upper bound; the effective credential lifetime is bounded to the game's `playing` status per 03-REQ-058 — Convex rejects all requests against non-playing games regardless of JWT validity. *(Amended per 05-REVIEW-012 resolution.)*
 
 **DOWNSTREAM IMPACT**: [05] calls `issueGameCredential()` during game-start orchestration to generate the credential included in each team's game invitation payload.
 

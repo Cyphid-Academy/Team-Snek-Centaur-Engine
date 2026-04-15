@@ -174,7 +174,7 @@ All other event categories may be written by either the Snek Centaur Server or a
 
 **06-REQ-040**: Game-scoped Centaur state (per-snake portfolio state, selection state, computed display state, action log, game-scoped team state) shall be retained after the game ends for the lifetime of the game record in Convex ([05]). It shall not be deleted at the time SpacetimeDB teardown occurs per [02-REQ-021].
 
-**06-REQ-041**: Team-scoped Centaur state (heuristic default configuration, bot parameters) shall persist for the lifetime of the Centaur Team. Deletion of a Centaur Team shall cascade to its team-scoped Centaur state; the cascade mechanics are owned by [05].
+**06-REQ-041**: Team-scoped Centaur state (heuristic default configuration, bot parameters) shall persist for the lifetime of the Centaur Team. Because Centaur Teams cannot be deleted (archive-only semantics per [05-REQ-015a]), no cascade mechanics are required; archiving a team preserves all team-scoped Centaur state. *(Amended per 05-REVIEW-011 resolution: deletion replaced with archive-only semantics.)*
 
 **06-REQ-042**: The subsystem shall not reuse game-scoped state across distinct games. A freshly provisioned game ([02-REQ-020]) shall have no pre-existing per-snake portfolio state, selection state, computed display state, or action log entries.
 
@@ -488,7 +488,7 @@ mutation toggleOperatorMode(args: {
 }): void
 ```
 
-Authorization: caller must be a member of the CentaurTeam. Per informal spec §7.5, the toggle is available to the designated timekeeper; role-level access control (timekeeper check) is enforced by the mutation. Writes a `mode_toggled` action log entry transactionally.
+Authorization: caller must be the Captain of the CentaurTeam. Per informal spec §7.5, the toggle is available to the designated timekeeper; this capability has been merged into the Captain role per 05-REVIEW-014. The mutation verifies `centaur_teams.captainId === callerId`. Writes a `mode_toggled` action log entry transactionally. *(Amended per 05-REVIEW-014 resolution: timekeeper merged into captain.)*
 
 **Game-level parameter overrides** — `setGameParamOverrides`.
 
@@ -686,7 +686,7 @@ Each variant's `snakeId` field (where present) enables the `by_game_type_snake` 
 
 The `statemap_updated` event stores full snapshots (not deltas) per [06-REQ-028], so any recorded snapshot is independently interpretable.
 
-The `turn_submitted` event records when the team's timekeeper submits the turn, which is distinct from SpacetimeDB's `declare_turn_over` — the Centaur action log records the operator-interface-level intent, not the STDB confirmation.
+The `turn_submitted` event records when the team's Captain submits the turn, which is distinct from SpacetimeDB's `declare_turn_over` — the Centaur action log records the operator-interface-level intent, not the STDB confirmation. *(Amended per 05-REVIEW-014 resolution: timekeeper merged into captain.)*
 
 ---
 
@@ -1212,7 +1212,7 @@ interface GameCentaurStateInitContract {
 
 **Type**: Gap
 **Phase**: Design
-**Context**: The live operator interface ([08]) displays the current operator mode (Centaur or Automatic) and the timekeeper can toggle it. The mode affects the Centaur Server's turn-submission behaviour ([07]). Two approaches for storing the current mode: (A) persist it as a game-scoped record that is updated on toggle, or (B) derive it from the action log by replaying `mode_toggled` events. Approach B adds complexity to every reader and introduces latency for mode-dependent decisions in the bot framework.
+**Context**: The live operator interface ([08]) displays the current operator mode (Centaur or Automatic) and the Captain can toggle it (timekeeper capability merged into captain per 05-REVIEW-014). The mode affects the Centaur Server's turn-submission behaviour ([07]). Two approaches for storing the current mode: (A) persist it as a game-scoped record that is updated on toggle, or (B) derive it from the action log by replaying `mode_toggled` events. Approach B adds complexity to every reader and introduces latency for mode-dependent decisions in the bot framework.
 **Question**: Should the current operator mode be stored as a live game-scoped record, or derived from the action log?
 **Options**:
 - A: Add a game-scoped record for current operator mode (and potentially other game-scoped team-level state), updated on toggle. Readers consult the record directly.

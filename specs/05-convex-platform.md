@@ -30,39 +30,41 @@
 
 **05-REQ-009**: Convex shall record the latest healthcheck status and timestamp for each Centaur Team's nominated server domain ([02-REQ-029]). The healthcheck status shall be queryable by team members and by any authenticated user viewing the team's profile. The healthcheck may be triggered on demand by team members or by the Room Lobby view. Convex shall not be required to poll server health automatically; on-demand and game-start-time checks are sufficient.
 
-**05-REQ-011**: Convex shall maintain a persistent record of Centaur Team membership associating each human member with the Centaur Team and with a role. The closed set of roles shall be: Captain, Timekeeper, and Operator. At any given moment a Centaur Team shall have exactly one Captain and at most one Timekeeper.
+**05-REQ-011**: Convex shall maintain a persistent record of Centaur Team membership associating each human member (an Operator) with the Centaur Team. Every team member is an Operator. Captain designation is not a per-member role but a structural property of the team itself: the `centaur_teams` record's `captainId` field identifies the unique Captain. There is no separate role assignment mechanism. *(Amended per 05-REVIEW-014 resolution: timekeeper role eliminated and merged into captain; roles array removed.)*
 
-**05-REQ-012**: Convex shall permit the Captain of a Centaur Team to add and remove human members from the team, to assign or unassign the Timekeeper role to any current team member, and to transfer the Captain role to another current team member. These mutations shall be subject to the mid-game freeze of [03-REQ-046].
+**05-REQ-012**: Convex shall permit the Captain of a Centaur Team to add and remove human members from the team, and to transfer the Captain designation to another current team member (by updating `captainId`). All capabilities previously associated with the Timekeeper role (e.g., operator-mode toggling per [06]) are held by the Captain. These mutations shall be subject to the mid-game freeze of [03-REQ-046]. *(Amended per 05-REVIEW-014 resolution.)*
 
-**05-REQ-013** *(negative)*: Convex shall reject any mutation to a Centaur Team's membership or Captain assignment while that team is participating in a game whose status is `playing`, consistent with [03-REQ-046].
+**05-REQ-013** *(negative)*: Convex shall reject any mutation to a Centaur Team's membership or Captain assignment while that team is participating in a game whose status is `playing`, consistent with [03-REQ-046]. During a tournament, this freeze extends for the entire tournament lifetime per [05-REQ-064].
 
 **05-REQ-014**: Convex shall permit the Captain of a Centaur Team to set or update the team's `nominatedServerDomain`. Setting the domain is a simple string field update — no challenge-callback or domain verification is required at nomination time. Domain validity is verified implicitly at game start when Convex POSTs a game invitation to the domain (see [05-REQ-032b]). The `nominatedServerDomain` shall not be changed while the team is participating in a game whose status is `playing`.
 
 **05-REQ-015**: Convex shall permit the Captain to clear a Centaur Team's `nominatedServerDomain`, setting it to null. A team with a null `nominatedServerDomain` cannot participate in a game.
 
-**05-REQ-015a**: Convex shall permit the deletion of a Centaur Team only when the team has no game in the `playing` status. Deletion of a Centaur Team shall cascade to all team-scoped records owned by this module (team membership entries) and shall cascade to team-scoped Centaur state owned by [06] per [06-REQ-041]. Historical game records that reference the deleted team shall be preserved per [03-REQ-047]; the participating-teams snapshot of each such historical game ([05-REQ-029]) shall continue to resolve the team's historical identity for attribution purposes even after the live team record is deleted.
+**05-REQ-015a**: Convex shall not permit the deletion of a Centaur Team. Instead, the Captain may archive a Centaur Team by setting its `archived` flag to true, provided the team has no game in the `playing` status and is not participating in an active tournament. Archived teams are hidden from default listings and cannot be enrolled in new games, but all live and historical state — including team membership entries, team-scoped Centaur state owned by [06], and historical game records — is preserved. Historical game records that reference an archived team shall continue to resolve the team's historical identity for attribution purposes. An archived team may be unarchived by its Captain (or an admin) to resume activity. *(Amended per 05-REVIEW-011 resolution.)*
 
 ---
 
 ### 5.4 Rooms
 
-**05-REQ-016**: Convex shall maintain a persistent record of every Room. Each room record shall capture at minimum a room name, an optional owner (a user record), a reference to the room's current game if one exists, the room's current game-configuration parameter values (per [05-REQ-024]), and the set of Centaur Teams currently enrolled in the room.
+**05-REQ-016**: Convex shall maintain a persistent record of every Room. Each room record shall capture at minimum a room name, an optional owner (a user record), a reference to the room's current game if one exists, the set of Centaur Teams currently enrolled in the room, and an archived flag. Rooms do not hold game-configuration state; all configuration lives on the game object per [05-REQ-024]. *(Amended per 05-REVIEW-008 resolution.)*
 
-**05-REQ-017**: A room's owner shall have administrative control over the room's configuration: parameter values, enrolled teams, and game start. When a room has no owner, any authenticated human identity with access to the room shall hold equivalent administrative control.
+**05-REQ-017**: A room's owner shall have administrative control over the room: enrolled teams, game start, and configuration of the room's current not-started game. When a room has no owner, any authenticated human identity with access to the room shall hold equivalent administrative control.
 
 **05-REQ-018**: A room's owner shall be able to abdicate ownership, after which the room enters the no-owner state described in [05-REQ-017]. Ownership abdication shall be irreversible within a given room: once abdicated, the platform shall not reassign ownership of that room to any user.
 
-**05-REQ-019**: Convex shall permit authenticated humans to create a room. The creating user shall become the room's owner on creation.
+**05-REQ-019**: Convex shall permit authenticated humans to create a room. The creating user shall become the room's owner on creation. Room creation shall also create an initial `not-started` game in the room with default configuration parameter values per [05-REQ-023]. *(Amended per 05-REVIEW-008 resolution.)*
 
 **05-REQ-020**: A room shall require at least two enrolled Centaur Teams before its current game can transition from `not-started` to `playing` ([05-REQ-027]).
 
-**05-REQ-021**: A room's lifetime shall be independent of the lifetimes of the games hosted within it. A room shall persist across any number of sequential games until it is explicitly deleted by an authorized actor.
+**05-REQ-021**: A room's lifetime shall be independent of the lifetimes of the games hosted within it. A room shall persist indefinitely; there is no deletion path. Instead, an authorized actor may archive a room by setting its `archived` flag to true. Archived rooms are excluded from default listings but preserve all historical games, replays, and action logs. *(Amended per 05-REVIEW-002 resolution.)*
+
+**05-REQ-021a**: When a room is archived, no new games may be created or started in it. The room may be unarchived by an authorized actor (the owner, or any authenticated user if the room has no owner, or an admin) to resume activity. *(Added per 05-REVIEW-002 resolution.)*
 
 ---
 
 ### 5.5 Game Configuration
 
-**05-REQ-022**: Convex shall be the sole source of truth for the configured parameter values of every game and of every room's default parameter values. At initialization time per [05-REQ-032], only the dynamic gameplay parameters (per [05-REQ-032d]) and the pre-computed initial game state are supplied to the SpacetimeDB game instance; board generation parameters are consumed by Convex during board generation and are not forwarded to STDB.
+**05-REQ-022**: Convex shall be the sole source of truth for the configured parameter values of every game. Game configuration parameters live on the game object; rooms do not hold configuration state. At initialization time per [05-REQ-032], only the dynamic gameplay parameters (per [05-REQ-032d]) and the pre-computed initial game state are supplied to the SpacetimeDB game instance; board generation parameters are consumed by Convex during board generation and are not forwarded to STDB. *(Amended per 05-REVIEW-008 resolution.)*
 
 **05-REQ-023**: The closed set of game-configuration parameters shall be the following. Each parameter has a type, a default value, and (where applicable) an acceptable range. Convex shall reject any attempt to set a parameter to a value outside its defined range or type.
 
@@ -93,7 +95,7 @@
 | Scheduled start time | Datetime | now + 10 min | — | Required when tournament mode on |
 | Game privacy | Boolean | off | — | When on, replay within-turn actions are restricted per [05-REQ-067] |
 
-**05-REQ-024**: Convex shall associate a game-configuration parameter set with every room (as the room's defaults) and with every game (as the game's binding parameters). A game's parameter set shall be captured as an immutable snapshot at the moment the game is created; subsequent edits to the room's defaults shall not retroactively affect an already-created game.
+**05-REQ-024**: Convex shall associate a game-configuration parameter set with every game. The parameter set is editable while the game is in `not-started` status. When the game transitions to `playing`, the parameter set is frozen as an immutable snapshot for the remainder of the game's lifetime. *(Amended per 05-REVIEW-008 resolution: configuration lives exclusively on the game object; rooms do not hold configuration defaults.)*
 
 **05-REQ-025**: Parameters whose meaning is conditional on another parameter (for example, fertile density and fertile clustering depend on fertile ground being on) shall be validated in a manner consistent with those conditions. Convex shall not refuse to persist a dependent parameter's value merely because its gating parameter is currently off, but shall also not supply that dependent value to the SpacetimeDB game instance when its gating parameter is off.
 
@@ -103,42 +105,42 @@
 
 ### 5.6 Games and Game Lifecycle Orchestration
 
-**05-REQ-027**: Convex shall maintain a persistent record of every game. Each game record shall capture at minimum the game's room, the bound parameter snapshot ([05-REQ-024]), a status value from the closed set `{ not-started, playing, finished }`, a reference to its SpacetimeDB instance (per [05-REQ-032]), the final scores (populated at game end per [05-REQ-038]), and the timestamps at which the game entered the `playing` and `finished` states.
+**05-REQ-027**: Convex shall maintain a persistent record of every game. Each game record shall capture at minimum the game's room, the bound parameter snapshot ([05-REQ-024]), a status value from the closed set `{ not-started, playing, finished }`, a reference to its SpacetimeDB instance (per [05-REQ-032]), the final outcome and scores (populated at game end per [05-REQ-038]), and the timestamps at which the game entered the `playing` and `finished` states.
 
-**05-REQ-028**: Convex shall be the sole authority for every game's status value. Transitions shall be: `not-started → playing` (on successful provisioning, seeding, and invitation acceptance per [05-REQ-032] and [05-REQ-032b]), `playing → finished` (on receipt of the game's terminal state from the SpacetimeDB instance per [05-REQ-038]). No other transitions shall be permitted, except for the invitation-failure rollback described in [05-REQ-032c].
+**05-REQ-028**: Convex shall be the sole authority for every game's status value. Transitions shall be: `not-started → playing` (on successful provisioning, seeding, and invitation acceptance per [05-REQ-032] and [05-REQ-032b]), `playing → finished` (on receipt of the game's terminal state from the SpacetimeDB instance per [05-REQ-038]). No other transitions shall be permitted, except for the healthcheck-failure rollback described in [05-REQ-036].
 
 **05-REQ-029**: Convex shall maintain, for every game, a persistent record of which Centaur Teams are participating in that game and, for each such team, a snapshot of the team's authorized human members and their roles at the moment the game was created. This snapshot shall be treated as append-only historical fact per [03-REQ-047] and shall be used by Convex to seed the SpacetimeDB instance's admission authorization state at initialization time ([03-REQ-039]).
 
 **05-REQ-030**: The game's participating-teams snapshot shall be used, in combination with the Centaur Team records of [05-REQ-008], to determine which operators are authorized to obtain SpacetimeDB access tokens for the game, consistent with [03-REQ-024].
 
-**05-REQ-031**: Convex shall permit the administrative actor for a room (per [05-REQ-017]) to initiate a game start when all participating Centaur Teams have marked themselves ready and the room has at least two enrolled teams. Upon successful game start, Convex shall create the game record in the `not-started` status and proceed to provisioning per [05-REQ-032].
+**05-REQ-031**: Convex shall permit the administrative actor for a room (per [05-REQ-017]) to initiate a game start when all participating Centaur Teams have declared themselves ready and the room has at least two enrolled teams. Readiness is a per-team flag on the game record, set from game creation onward; the not-started game is created eagerly to hold readiness state. Only the Captain of a Centaur Team may declare their team ready for a game; no other team member may set this flag. Ready flags are cleared whenever a new game is auto-created per [05-REQ-039]. Upon successful game start, Convex shall proceed to provisioning per [05-REQ-032]. *(Amended per 05-REVIEW-007 resolution.)*
 
 **05-REQ-032**: On game start, Convex shall orchestrate the following sequence:
 
 1. Freeze the game configuration ([05-REQ-024]).
-2. Obtain the initial game state: if the room owner has locked in a board preview ([05-REQ-032b]), use that exact pre-computed board state; otherwise, run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this mutation; if all attempts fail, the mutation produces a structured `BoardGenerationFailure` error that is surfaced reactively to the room owner (see [05-REQ-032c]), and the orchestration does not proceed.
+2. Obtain the initial game state: if the administrative actor has locked in a board preview ([05-REQ-032b]), use that exact pre-computed board state; otherwise, run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript directly within a Convex mutation to produce a fresh initial game state. Bounded-retry feasibility logic ([01-REQ-061]) runs within this mutation; if all attempts fail, the mutation produces a structured `BoardGenerationFailure` error that is surfaced reactively to the administrative actor (see [05-REQ-032c]), and the orchestration does not proceed.
 3. Retrieve the pre-compiled WASM module binary from Convex file storage ([05-REQ-073]) and provision a fresh SpacetimeDB game instance by submitting the binary to the self-hosted SpacetimeDB management API (`POST /v1/database` with the WASM binary in the request body), authenticated per [03-REQ-048]. This single operation creates the database and deploys the game engine module.
-4. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the game seed (the root seed used by `generateBoardAndInitialState()`, forwarded for turn-resolution randomness and replay export per [04]), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the game-end notification callback URL (a Convex HTTP action endpoint for receiving game-end notifications per [04-REQ-061a]), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's connection authorization state per [03-REQ-039], and the game's unique identifier (for `aud` claim validation in `client_connected`). No per-instance signing secret is passed for client authentication — client authentication uses OIDC-based JWT validation against the platform's public key (see [03] §3.17). A per-game **game-outcome callback token** — an RS256-signed JWT issued by Convex with `iss` = `CONVEX_SITE_URL`, `sub` = `stdb-instance:{gameId}`, `aud` = the game-end callback URL, and `exp` = 2 hours — is included in the `initialize_game` payload. This token is stored by the STDB module and presented as a Bearer token when it POSTs the game-end notification back to Convex. The token is signed using the `SPACETIMEDB_SIGNING_KEY` RSA private key (or a dedicated callback-token key pair if operationally preferred). Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
-5. Send game invitations to each participating Centaur Team's nominated server domain (per [03]).
-6. Upon acceptance by all servers, update the game record with the instance URL and transition the game's status to `playing`.
+4. Invoke the instance's privileged initialization reducer (owned by [04]) via a Convex HTTP action calling SpacetimeDB's HTTP API (`POST /v1/database/{name}/call/{reducer_name}`) with all of the following: the pre-computed initial game state (board layout, snake starting states, initial items — the output of `generateBoardAndInitialState()`), the game seed (the root seed used by `generateBoardAndInitialState()`, forwarded for turn-resolution randomness and replay export per [04]), the dynamic gameplay parameters (the subset of the game configuration that affects runtime behaviour — food spawn rates, potion spawn rates, hazard damage, max health, timer budgets, max turns, etc.), the game-end notification callback URL (a Convex HTTP action endpoint for receiving game-end notifications per [04-REQ-061a]), the participating-teams snapshot ([05-REQ-029]) sufficient to populate the instance's connection authorization state per [03-REQ-039], and the game's unique identifier (for `aud` claim validation in `client_connected`). No per-instance signing secret is passed for client authentication — client authentication uses OIDC-based JWT validation against the platform's public key (see [03] §3.17). A per-game **game-outcome callback token** — an RS256-signed JWT issued by Convex with `iss` = `CONVEX_SITE_URL`, `sub` = `stdb-instance:{gameId}`, `aud` = the game-end callback URL, and `exp` = 2 hours — is included in the `initialize_game` payload. The STDB module stores this token and presents it as a Bearer token when it POSTs the game-end notification (including the bundled replay data per [04-REQ-061]) back to Convex. The token is signed using the `SPACETIMEDB_SIGNING_KEY` RSA private key (or a dedicated callback-token key pair if operationally preferred). Convex does not store the callback token — it validates incoming callbacks by verifying the JWT signature against its own key and checking the claims (`iss`, `sub`, `aud`, `exp`). *(Amended per 05-REVIEW-015 resolution: token not stored in Convex; replay data bundled in notification.)* Board generation parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team) are **not** passed to STDB — they are consumed by Convex during board generation and their output is the pre-computed initial game state.
+5. Send game invitations to each participating Centaur Team's nominated server domain (per [03]). Each invitation must be accepted within **10 seconds**; if any server rejects the invitation or fails to respond within the timeout, the game-start orchestration fails and the game returns to `not-started` status with an error indicating which server(s) declined or timed out per [03-REQ-056]. *(Amended per 05-REVIEW-013 resolution.)*
+6. Upon acceptance by all servers, initialize Centaur subsystem state for each participating team by calling `initializeGameCentaurState()` from [06] for each team, update the game record with the instance URL, and transition the game's status to `playing`.
 
 Successful completion of this sequence shall transition the game's status to `playing`.
 
-**05-REQ-032a**: Convex's interactions with the SpacetimeDB hosting platform and with a provisioned instance during the orchestration of [05-REQ-032] shall be authenticated per [03-REQ-048]. As part of the same orchestration, Convex shall register itself as a subscriber to the provisioned instance's game-end notification mechanism ([04-REQ-061a]) no later than the successful completion of that orchestration. The game-outcome callback token included in the `initialize_game` payload (05-REQ-032 step 4) serves as the registration — the STDB module stores the token and callback URL, and uses them to POST the game-end notification to Convex when a terminal outcome is detected. No separate subscription registration step is required.
+**05-REQ-032a**: Convex's interactions with the SpacetimeDB hosting platform and with a provisioned instance during the orchestration of [05-REQ-032] shall be authenticated per [03-REQ-048]. As part of the same orchestration, Convex shall register itself as a subscriber to the provisioned instance's game-end notification mechanism ([04-REQ-061a]) no later than the successful completion of that orchestration. The game-outcome callback token and callback URL included in the `initialize_game` payload (05-REQ-032 step 4) serve as the registration — the STDB module stores these values and uses them to POST the game-end notification (with bundled replay data) to Convex when a terminal outcome is detected. No separate subscription registration step is required. Convex does not persist the callback token in its own database; it validates the token on receipt by JWT signature verification and claims checking. *(Amended per 05-REVIEW-015 resolution.)*
 
-**05-REQ-032b**: Convex shall provide a **reactive board-generation preview mutation**. When the room owner edits board-affecting configuration parameters (board dimensions, hazard %, fertile ground density/clustering, snake count per team, or any other parameter that is an input to `generateBoardAndInitialState()`), a Convex mutation shall re-run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript to produce a board preview. This mutation runs bounded-retry feasibility logic ([01-REQ-061]) and produces either a valid board state or a structured `BoardGenerationFailure` error ([01] Section 3.6) surfaced reactively to the web client via Convex's reactive query model. The room owner may:
-- **Lock in** the preview (via a UI affordance per [09-REQ-031]) to use that exact board as the starting layout for the next game created in the room. The locked-in board state shall be persisted by Convex as part of the room record and consumed by [05-REQ-032] step 2 at game-start time.
+**05-REQ-032b**: Convex shall provide a **board-generation preview mutation**. When the administrative actor edits board-affecting configuration parameters on the current not-started game (board dimensions, hazard %, fertile ground density/clustering, snake count per team, or any other parameter that is an input to `generateBoardAndInitialState()`), a Convex mutation shall re-run `generateBoardAndInitialState()` from the shared engine codebase ([02-REQ-035]) as pure TypeScript to produce a board preview. This mutation runs bounded-retry feasibility logic ([01-REQ-061]) and produces either a valid board state or a structured `BoardGenerationFailure` error ([01] Section 3.6) surfaced reactively to the web client via Convex's reactive query model. The administrative actor may:
+- **Lock in** the preview (via a UI affordance per [08]) to use that exact board as the starting layout for the next game started. The locked-in board state shall be persisted by Convex as part of the game record and consumed by [05-REQ-032] step 2 at game-start time. *(Amended per 05-REVIEW-008 resolution: board preview persisted on game record, not room record.)*
 - **Leave it unlocked**, in which case a fresh board is generated by [05-REQ-032] step 2 at game-start time — no participant will have seen this board until the game starts.
 
-No STDB instance exists during config mode; the board preview is generated and persisted entirely within Convex. Cross-reference: this resolves the core architectural question of 09-REVIEW-001 (board preview generation locality) and 09-REVIEW-003 (locked-in preview persistence), though formal resolution of those items may happen in the context of Module 08/09.
+No STDB instance exists during config mode; the board preview is generated and persisted entirely within Convex.
 
-**05-REQ-032c**: When `generateBoardAndInitialState()` returns a `BoardGenerationFailure` (either during the preview mutation of [05-REQ-032b] or during game-start orchestration of [05-REQ-032] step 2), Convex shall surface the structured error reactively to the web client. The error shall identify which constraint failed on the final attempt (per [01-REQ-061]) so the room owner can modify the game configuration and re-attempt. This is the primary user-facing failure path for board-generation infeasibility — it occurs in Convex during config mode, before any STDB instance is provisioned.
+**05-REQ-032c**: When `generateBoardAndInitialState()` returns a `BoardGenerationFailure` (either during the preview mutation of [05-REQ-032b] or during game-start orchestration of [05-REQ-032] step 2), Convex shall surface the structured error reactively to the web client. The error shall identify which constraint failed on the final attempt (per [01-REQ-061]) so the administrative actor can modify the game configuration and re-attempt. This is the primary user-facing failure path for board-generation infeasibility — it occurs in Convex during config mode, before any STDB instance is provisioned.
 
 **05-REQ-032d**: The game-configuration parameter set ([05-REQ-023]) shall be understood as comprising two categories:
 - **Board generation parameters**: board dimensions, hazard %, fertile ground enabled/density/clustering, snake count per team. These are inputs to `generateBoardAndInitialState()` and are consumed entirely by Convex during board generation. They are not passed to the SpacetimeDB instance.
 - **Dynamic gameplay parameters**: food spawn rate, potion spawn rates (invulnerability, invisibility), hazard damage, max health, timer budgets (turn time, reserve time), max turns, and other parameters that affect runtime behaviour during gameplay. These are forwarded to the SpacetimeDB instance at init time alongside the pre-computed initial game state.
 
-The parameter split is a consequence of board generation moving to Convex (see [02] §2.14). Both categories are stored in the room's parameter defaults and in each game's immutable parameter snapshot ([05-REQ-024]), but only dynamic gameplay parameters are included in the payload sent to STDB's `initialize_game` reducer.
+The parameter split is a consequence of board generation moving to Convex (see [02] §2.14). Both categories are stored in each game's parameter set ([05-REQ-024]), but only dynamic gameplay parameters are included in the payload sent to STDB's `initialize_game` reducer.
 
 **05-REQ-033** *(negative)*: Convex shall not provision a SpacetimeDB game instance before a game record has been created for it, and shall not create a game record without intending to provision an instance for it. Unorphaned instance-less game records and game-less instances are both disallowed states.
 
@@ -148,19 +150,19 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-035**: The Convex runtime shall be the sole issuer of SpacetimeDB access tokens for every SpacetimeDB game instance it provisions, consistent with [03-REQ-019], [03-REQ-024], and [03-REQ-026]. The Convex runtime shall refuse to issue a SpacetimeDB access token whose target game is in the `finished` status.
 
-**05-REQ-036**: When a Snek Centaur Server hosting a participating Centaur Team's `nominatedServerDomain` returns unhealthy from the healthcheck endpoint ([02-REQ-029]) at a moment Convex is preparing to transition a game to `playing`, Convex shall not transition the game to `playing`. The specific recovery action (retry, abort, surface error to operator) is unspecified at the requirements level and shall be determined in Design.
+**05-REQ-036**: When a Snek Centaur Server hosting a participating Centaur Team's `nominatedServerDomain` returns unhealthy from the healthcheck endpoint ([02-REQ-029]) at a moment Convex is preparing to transition a game to `playing`, Convex's behaviour depends on the game type: (a) For manually-started games: the game returns to `not-started` status with a healthcheck failure message and a visual indicator of which Centaur Teams' servers are failing. The game cannot be manually started until all teams pass healthcheck. (b) For tournament games that are forcefully started on schedule: failing healthcheck is ignored. If the Centaur Team can get their server running in time to participate, they may; otherwise they are absent from the game. *(Amended per 05-REVIEW-009 resolution.)*
 
-**05-REQ-037**: After a game's status has transitioned to `finished` and its replay has been persisted per [05-REQ-040], Convex shall orchestrate teardown of the SpacetimeDB game instance per [02-REQ-021]. Teardown shall complete before any SpacetimeDB resources associated with the instance are released by the platform.
+**05-REQ-037**: After the game-end HTTP action has received the game-end notification (which bundles the complete replay data per [04-REQ-061]), persisted the replay per [05-REQ-040], and transitioned the game to `finished`, Convex shall tear down the SpacetimeDB game instance from within the same HTTP action, using its platform-level management authority per [03-REQ-048] and [02-REQ-021]. The instance is torn down immediately after Convex confirms successful replay storage — no separate scheduled teardown step is required. *(Amended per 05-REVIEW-015 resolution: teardown integrated into game-end HTTP action.)*
 
-**05-REQ-038**: Convex shall learn of a game's terminal state — produced by the win-condition check of [01-REQ-050–052] (owned by [01]; specific event shape owned by [04]) — via a runtime-pushed notification delivered through the mechanism of [04-REQ-061a], authenticated by the game-outcome callback token provisioned at game-start time per [05-REQ-032a]. On receipt of such a notification, Convex shall obtain the game's final scores — either from the notification payload or from the historical record retrieved per [05-REQ-040], at Design's discretion — and write them to the game record, transitioning the game's status to `finished`. The callback endpoint shall accept both normal outcomes (victory, draw) and error outcomes (game interrupted due to an exception), handling each appropriately — normal outcomes trigger score recording and replay persistence; error outcomes trigger teardown without scores.
+**05-REQ-038**: Convex shall learn of a game's terminal state — produced by the win-condition check of [01-REQ-050–052] (owned by [01]; specific event shape owned by [04]) — via a runtime-pushed notification delivered through the mechanism of [04-REQ-061a], authenticated by verifying the game-outcome callback token's RS256 signature and claims (`iss`, `sub`, `aud`, `exp`) per [05-REQ-032a]. The notification payload includes both the `GameOutcome` and the complete game replay data (all STDB historical tables per [04-REQ-061]). On receipt, Convex shall: record the game's outcome and scores, persist the replay to file storage, transition the game to `finished`, and tear down the STDB instance — all within the same HTTP action. The callback endpoint shall accept both normal outcomes (victory, draw) and error outcomes (game interrupted due to an exception), handling each appropriately — normal outcomes trigger score recording and replay persistence followed by teardown; error outcomes trigger teardown without scores or replay. *(Amended per 05-REVIEW-015 resolution: replay data bundled in notification; teardown integrated.)*
 
-**05-REQ-039**: After a game's status has transitioned to `finished` in a non-tournament context, Convex shall auto-create the next game in the same room, inheriting the room's current parameter defaults (not the just-finished game's snapshot). The next game shall begin in the `not-started` status and shall be distinct from the just-finished game per [02-REQ-020].
+**05-REQ-039**: After a game's status has transitioned to `finished` in a non-tournament context, Convex shall auto-create the next game in the same room by atomically copying the finished game's configuration parameter set into a fresh game object in the `not-started` status. The new game shall be distinct from the just-finished game per [02-REQ-020]. All ready flags on the new game shall be cleared. The new game's locked-in board preview shall be null (no preview carried over). *(Amended per 05-REVIEW-008 resolution: config is inherited from the finished game, not from room defaults.)*
 
 ---
 
 ### 5.7 Replay Persistence
 
-**05-REQ-040**: Before tearing down a SpacetimeDB game instance per [05-REQ-037], Convex shall obtain the complete append-only game record from the instance — comprising all static tables and all turn-keyed tables sufficient to reconstruct any historical turn of the game per [02-REQ-013] — and shall persist this record as a replay associated with the game record. Retrieval may follow any pattern permitted by [04-REQ-061] (Convex-pull via HTTP action, runtime-push to a Convex endpoint, or bundling into the game-end notification of [04-REQ-061a]); in all cases, Convex's access to the instance for retrieval is authenticated per [03-REQ-048].
+**05-REQ-040**: Before tearing down a SpacetimeDB game instance per [05-REQ-037], Convex shall obtain the complete append-only game record from the instance — comprising all static tables and all turn-keyed tables sufficient to reconstruct any historical turn of the game per [02-REQ-013] — and shall persist this record as a replay associated with the game record. The replay data is received as part of the `GameEndNotification` payload (bundled by the STDB `notify_game_end` procedure per [04-REQ-061], [04-REQ-061a]). The callback token authenticating the notification is a Convex-signed JWT validated by signature verification and claims checking; no stored-token comparison is required. *(Amended per 05-REVIEW-015 resolution: retrieval pattern resolved to bundled-in-notification.)*
 
 **05-REQ-041**: The persisted replay shall be sufficient, in combination with the Centaur subsystem action log owned by [06], to reconstruct the complete turn-level history of the game for the unified replay viewer ([08]).
 
@@ -174,11 +176,11 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 ### 5.8 HTTP API
 
-**05-REQ-045**: Convex shall expose an HTTP API for programmatic management of Centaur Teams, rooms, games, and webhook subscriptions. Every request to this API shall be authorized by a bearer API key per [03-REQ-033] and rejected if the key is missing, invalid, or revoked.
+**05-REQ-045**: Convex shall expose an HTTP API for programmatic management of Centaur Teams, rooms, games, and webhook subscriptions. API keys are an admin-only affordance: only admin users (per [05-REQ-065]) may create API keys. Every request to this API shall be authorized by a bearer API key per [03-REQ-033] and rejected if the key is missing, invalid, revoked, or if the key's creator is not an admin. *(Amended per 05-REVIEW-004 resolution.)*
 
-**05-REQ-046**: Convex shall maintain a persistent record of every API key. Each record shall capture at minimum a one-way-hash of the key material (per [03-REQ-034]), a human-chosen label, the user record of the creating human ([03-REQ-035]), the creation timestamp, and a revocation timestamp that is null until the key is revoked. Convex shall never store or expose the plaintext key material after the single creation-time disclosure of [03-REQ-034].
+**05-REQ-046**: Convex shall maintain a persistent record of every API key. Each record shall capture at minimum a one-way-hash of the key material (per [03-REQ-034]), a human-chosen label, the user record of the creating human (who must be an admin per [05-REQ-045]), the creation timestamp, and a revocation timestamp that is null until the key is revoked. Convex shall never store or expose the plaintext key material after the single creation-time disclosure of [03-REQ-034]. *(Amended per 05-REVIEW-004 resolution.)*
 
-**05-REQ-047**: The HTTP API's authorization scope for a given API key shall be bounded by the authorization scope of the human who created the key, per [03-REQ-035]. If the creating human's team memberships or role assignments change such that their current authorization scope shrinks, the API key's scope shall shrink correspondingly. Convex shall not grant an API key any authorization its creator cannot currently exercise through the Snek Centaur Server frontend.
+**05-REQ-047**: The HTTP API's authorization scope for a given API key shall be global (admin-level). Because API keys are restricted to admin users, scope resolution is straightforward: every valid, non-revoked API key grants full platform access equivalent to the admin role. No per-user scope bounding or live scope resolution is required. *(Amended per 05-REVIEW-004 resolution: replaces live scope resolution with global admin scope.)*
 
 **05-REQ-048** *(negative)*: The HTTP API shall not expose endpoints that create human identities, that perform Google OAuth interactions, that issue SpacetimeDB access tokens directly, or that modify Centaur-subsystem state owned by [06]. These affordances are prohibited for API keys by [03-REQ-036].
 
@@ -191,9 +193,9 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-050**: Every mutation made through the HTTP API shall be subject to the same invariants as the equivalent Snek Centaur Server frontend action, including the mid-game roster freeze of [03-REQ-046].
 
-**05-REQ-051**: The HTTP API shall expose a means by which an authenticated human can create a new API key via the Snek Centaur Server frontend or via a dedicated endpoint. The plaintext of a newly created API key shall be disclosed to the creator exactly once at creation time ([03-REQ-034]).
+**05-REQ-051**: The HTTP API shall expose a means by which an admin user can create a new API key via the Snek Centaur Server frontend or via a dedicated endpoint. Only admin users may create API keys. The plaintext of a newly created API key shall be disclosed to the creator exactly once at creation time ([03-REQ-034]). *(Amended per 05-REVIEW-004 resolution.)*
 
-**05-REQ-052**: The HTTP API shall expose a means by which an authenticated human can revoke an API key they created. Revocation shall cause all subsequent requests presenting that key to be rejected.
+**05-REQ-052**: The HTTP API shall expose a means by which an admin user can revoke an API key. Revocation shall cause all subsequent requests presenting that key to be rejected.
 
 ---
 
@@ -221,17 +223,17 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 **05-REQ-061**: The first round of a tournament shall be scheduled to begin at the Scheduled start time parameter value. Convex shall not begin the first round before that moment regardless of Centaur Team readiness.
 
-**05-REQ-062**: Each round within a tournament shall inherit the configuration parameters of the enclosing tournament at the moment the round is created. The inherited parameter set shall not include the Tournament mode parameters themselves (Tournament rounds, Tournament interlude, Scheduled start time), which are meta-parameters of the tournament as a whole rather than per-round parameters.
+**05-REQ-062**: Each round within a tournament shall inherit the configuration parameters of the tournament's first game at the moment the tournament was created. The inherited parameter set shall not include the Tournament mode parameters themselves (Tournament rounds, Tournament interlude, Scheduled start time), which are meta-parameters of the tournament as a whole rather than per-round parameters.
 
 **05-REQ-063**: At the end of a tournament — the conclusion of the final round — Convex shall not auto-create an additional game per [05-REQ-039]. Auto-creation of next-games applies only outside tournament mode.
 
-**05-REQ-064**: The mid-game roster freeze of [03-REQ-046] shall apply per-round within a tournament: during each `playing` round, rosters of participating Centaur Teams are frozen; between rounds, rosters are not frozen at the Module [03] level. See REVIEW 05-REVIEW-003.
+**05-REQ-064**: The roster freeze for tournament games shall apply for the entire tournament lifetime — from the moment the first round transitions to `playing` until the final round transitions to `finished`. Roster mutations for participating Centaur Teams are frozen during inter-round interludes as well as during active rounds. *(Amended per 05-REVIEW-003 resolution: tournament-wide freeze replaces per-round freeze.)*
 
 ---
 
 ### 5.11 Admin Role
 
-**05-REQ-065**: The platform shall recognize an **admin** role at the Convex level, distinct from all Centaur Team roles (Captain, Timekeeper, Operator). Admin is a platform-wide role on the user record, not a per-team role.
+**05-REQ-065**: The platform shall recognize an **admin** role at the Convex level, distinct from Centaur Team membership. Admin is a platform-wide designation on the user record, not a per-team property. *(Amended per 05-REVIEW-014 resolution: simplified role language.)*
 
 **05-REQ-066**: Admin users shall be able to read all Centaur Team records, browse all games across all Centaur Teams, and view all replays regardless of team membership.
 
@@ -259,6 +261,1054 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 ---
 
+## Design
+
+### 2.1 Convex Table Schemas
+
+Satisfies 05-REQ-001, 05-REQ-003, 05-REQ-004, 05-REQ-008, 05-REQ-011, 05-REQ-016, 05-REQ-027, 05-REQ-029, 05-REQ-040, 05-REQ-046, 05-REQ-053, 05-REQ-073.
+
+Platform-wide tables are defined using Convex's `defineSchema`/`defineTable`/`v.*` DSL. Table names are verified not to collide with Module 06's 8 exported table names (`heuristic_config`, `global_centaur_params`, `snake_operator_state`, `snake_bot_state`, `snake_drives`, `snake_heuristic_overrides`, `game_centaur_state`, `centaur_action_log`). All indexes are non-unique; uniqueness invariants (e.g., one user per email) are enforced application-side in mutations via query-then-guard.
+
+```typescript
+import { defineSchema, defineTable } from "convex/server"
+import { v } from "convex/values"
+
+const gameConfigValidator = v.object({
+  boardSize: v.union(
+    v.literal("small"), v.literal("medium"),
+    v.literal("large"), v.literal("giant")
+  ),
+  maxTurnTimeSec: v.number(),
+  firstTurnTimeSec: v.number(),
+  initialTimeBudgetSec: v.number(),
+  budgetIncrementMs: v.number(),
+  snakesPerTeam: v.number(),
+  maxTurns: v.union(v.number(), v.null()),
+  maxHealth: v.number(),
+  hazardPercent: v.number(),
+  hazardDamage: v.number(),
+  foodSpawnRate: v.number(),
+  fertileGround: v.boolean(),
+  fertileDensity: v.number(),
+  fertileClustering: v.number(),
+  invulnPotions: v.boolean(),
+  invulnPotionSpawnRate: v.number(),
+  invisPotions: v.boolean(),
+  invisPotionSpawnRate: v.number(),
+  skipStartConfirmation: v.boolean(),
+  tournamentMode: v.boolean(),
+  tournamentRounds: v.union(v.number(), v.null()),
+  tournamentInterludeSec: v.union(v.number(), v.null()),
+  scheduledStartTime: v.union(v.number(), v.null()),
+  gamePrivacy: v.boolean(),
+})
+
+export default defineSchema({
+  users: defineTable({
+    email: v.string(),
+    displayName: v.string(),
+    createdAt: v.number(),
+    archived: v.boolean(),
+  })
+    .index("by_email", ["email"])
+    .index("by_archived", ["archived"]),
+
+  centaur_teams: defineTable({
+    name: v.string(),
+    displayColour: v.string(),
+    captainId: v.id("users"),
+    nominatedServerDomain: v.union(v.string(), v.null()),
+    archived: v.boolean(),
+    healthcheckStatus: v.union(
+      v.literal("healthy"), v.literal("unhealthy"),
+      v.literal("unknown"), v.null()
+    ),
+    healthcheckTimestamp: v.union(v.number(), v.null()),
+  })
+    .index("by_captain", ["captainId"])
+    .index("by_archived", ["archived"]),
+
+  centaur_team_members: defineTable({
+    centaurTeamId: v.id("centaur_teams"),
+    userId: v.id("users"),
+  })
+    .index("by_team", ["centaurTeamId"])
+    .index("by_user", ["userId"])
+    .index("by_team_user", ["centaurTeamId", "userId"]),
+
+  rooms: defineTable({
+    name: v.string(),
+    ownerId: v.union(v.id("users"), v.null()),
+    currentGameId: v.union(v.id("games"), v.null()),
+    enrolledTeamIds: v.array(v.id("centaur_teams")),
+    archived: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_archived", ["archived"]),
+
+  games: defineTable({
+    roomId: v.id("rooms"),
+    config: gameConfigValidator,
+    status: v.union(
+      v.literal("not-started"), v.literal("playing"), v.literal("finished")
+    ),
+    stdbInstanceUrl: v.union(v.string(), v.null()),
+    stdbModuleName: v.union(v.string(), v.null()),
+    outcome: v.union(v.any(), v.null()),
+    finalTurn: v.union(v.number(), v.null()),
+    createdAt: v.number(),
+    startedAt: v.union(v.number(), v.null()),
+    finishedAt: v.union(v.number(), v.null()),
+    readyTeamIds: v.array(v.id("centaur_teams")),
+    healthcheckFailures: v.union(
+      v.array(v.object({
+        centaurTeamId: v.id("centaur_teams"),
+        message: v.string(),
+      })),
+      v.null()
+    ),
+    lockedBoardPreview: v.union(v.any(), v.null()),
+    boardSeed: v.union(v.bytes(), v.null()),
+    tournamentId: v.union(v.id("tournaments"), v.null()),
+    tournamentRound: v.union(v.number(), v.null()),
+  })
+    .index("by_room", ["roomId"])
+    .index("by_room_status", ["roomId", "status"])
+    .index("by_status", ["status"])
+    .index("by_tournament", ["tournamentId"]),
+
+  game_teams: defineTable({
+    gameId: v.id("games"),
+    centaurTeamId: v.id("centaur_teams"),
+    rosterSnapshot: v.array(v.object({
+      userId: v.id("users"),
+      email: v.string(),
+      isCaptain: v.boolean(),
+    })),
+  })
+    .index("by_game", ["gameId"])
+    .index("by_team", ["centaurTeamId"])
+    .index("by_game_team", ["gameId", "centaurTeamId"]),
+
+  replays: defineTable({
+    gameId: v.id("games"),
+    storageId: v.id("_storage"),
+    retrievedAt: v.number(),
+  })
+    .index("by_game", ["gameId"]),
+
+  api_keys: defineTable({
+    keyHash: v.string(),
+    label: v.string(),
+    creatorId: v.id("users"),
+    createdAt: v.number(),
+    revokedAt: v.union(v.number(), v.null()),
+  })
+    .index("by_hash", ["keyHash"])
+    .index("by_creator", ["creatorId"]),
+
+  webhooks: defineTable({
+    url: v.string(),
+    eventTypes: v.array(
+      v.union(v.literal("game_start"), v.literal("game_end"))
+    ),
+    scopeType: v.union(v.literal("game"), v.literal("room")),
+    scopeId: v.string(),
+    apiKeyId: v.id("api_keys"),
+    createdAt: v.number(),
+  })
+    .index("by_api_key", ["apiKeyId"])
+    .index("by_scope", ["scopeType", "scopeId"]),
+
+  wasm_modules: defineTable({
+    storageId: v.id("_storage"),
+    uploadedAt: v.number(),
+    active: v.boolean(),
+  })
+    .index("by_active", ["active"]),
+
+  tournaments: defineTable({
+    roomId: v.id("rooms"),
+    totalRounds: v.number(),
+    interludeSeconds: v.number(),
+    scheduledStartTime: v.number(),
+    currentRound: v.number(),
+    status: v.union(
+      v.literal("scheduled"), v.literal("in_progress"), v.literal("completed")
+    ),
+    enrolledTeamIds: v.array(v.id("centaur_teams")),
+    baseConfig: gameConfigValidator,
+    createdAt: v.number(),
+  })
+    .index("by_room", ["roomId"])
+    .index("by_status", ["status"]),
+
+  webhook_delivery_attempts: defineTable({
+    webhookId: v.id("webhooks"),
+    eventType: v.union(v.literal("game_start"), v.literal("game_end")),
+    gameId: v.id("games"),
+    idempotencyKey: v.string(),
+    attemptNumber: v.number(),
+    status: v.union(
+      v.literal("pending"), v.literal("succeeded"), v.literal("failed")
+    ),
+    httpStatus: v.union(v.number(), v.null()),
+    scheduledAt: v.number(),
+    completedAt: v.union(v.number(), v.null()),
+  })
+    .index("by_webhook_game", ["webhookId", "gameId"])
+    .index("by_status", ["status"]),
+})
+```
+
+**Design rationale — table naming**: Platform tables use descriptive singular or plural names (`users`, `centaur_teams`, `games`, etc.) that are all distinct from Module 06's Centaur-subsystem table names. The `_storage` table is Convex's built-in file storage system.
+
+**Design rationale — `outcome` field on `games`**: The `outcome` field stores the `GameOutcome` from Module 04's `GameEndNotification` (§3.3) as `v.any()`. The expected shape is `{ kind: 'victory', winnerCentaurTeamId: string, scores: Record<string, number> }` | `{ kind: 'draw', tiedCentaurTeamIds: string[], scores: Record<string, number> }` | `{ kind: 'error', reason: string }`. The `winnerCentaurTeamId` and `tiedCentaurTeamIds` values are Convex `centaur_teams._id` strings (matching Module 04 §3.3's exported type). Using `v.any()` avoids redundant validator definitions for a type already defined upstream and permits future narrowing without data migration.
+
+**Design rationale — `lockedBoardPreview` field**: Stores the complete output of `generateBoardAndInitialState()` as a JSON-serializable value. The shape matches Module 01's exported types: `{ board: Board, snakes: SnakeState[], items: ItemState[] }`. Using `v.any()` follows Module 06's precedent for complex nested structures.
+
+**Design rationale — `tournaments` table**: Tournament-level metadata (total rounds, interlude, enrolled teams, base config) is separated from per-round game records. Each round-game references its tournament via `tournamentId` and `tournamentRound`. This avoids duplicating tournament metadata across every round-game and provides a clean anchor for the tournament-wide roster freeze.
+
+**Design rationale — `webhook_delivery_attempts` table**: Supports at-least-once delivery with retry tracking per 05-REQ-056. Each delivery attempt is recorded for auditability. The `idempotencyKey` enables subscriber-side deduplication.
+
+---
+
+### 2.2 Game Configuration Architecture
+
+Satisfies 05-REQ-022, 05-REQ-023, 05-REQ-024, 05-REQ-025, 05-REQ-026, 05-REQ-032d.
+
+**Config-on-game model** (05-REVIEW-008 resolution). Game configuration lives exclusively on the game object. The room is a dumb container for a succession of games with exactly one live (not-started or playing) game at a time. When a room is created, an initial not-started game is created with default config values per 05-REQ-023. When a game finishes, auto-create copies the finished game's config into a fresh not-started game.
+
+**Config editing**: While a game is in `not-started` status, its config is editable by the room's administrative actor (owner, or any authenticated user if no owner). A Convex mutation `updateGameConfig` accepts a partial config object and merges it into the game's config, validating each field against the ranges defined in 05-REQ-023:
+
+```typescript
+mutation updateGameConfig(args: {
+  gameId: Id<"games">
+  updates: Partial<GameConfig>
+}): void
+```
+
+The mutation rejects updates if the game's status is not `not-started`. Conditional validation per 05-REQ-025: dependent parameters (e.g., `fertileDensity` when `fertileGround` is off) are persisted but not validated against their range constraints until the gating parameter is on.
+
+**Config freeze**: When game-start orchestration begins (05-REQ-032 step 1), the config becomes immutable. The mutation that initiates game start reads the config and proceeds with it; no further `updateGameConfig` calls succeed because the game transitions away from `not-started`.
+
+**Parameter split** (05-REQ-032d). At game-start time, the config is split into:
+- **Board generation parameters** consumed by `generateBoardAndInitialState()`: `boardSize`, `hazardPercent`, `fertileGround`, `fertileDensity`, `fertileClustering`, `snakesPerTeam`.
+- **Dynamic gameplay parameters** forwarded to STDB's `initialize_game`: `snakesPerTeam`, `maxHealth`, `maxTurns`, `hazardDamage`, `foodSpawnRate`, `invulnPotions`, `invulnPotionSpawnRate`, `invisPotions`, `invisPotionSpawnRate`, `initialTimeBudgetSec`, `budgetIncrementMs`, `firstTurnTimeSec`, `maxTurnTimeSec`. Note `snakesPerTeam` appears in both categories (needed for initial snake placement and for runtime configuration).
+
+The mapping from `GameConfig` field names to `DynamicGameplayParams` field names (Module 04 §3.1) is a straightforward field-by-field translation performed in the game-start action.
+
+---
+
+### 2.3 Game Lifecycle Orchestration Pipeline
+
+Satisfies 05-REQ-027, 05-REQ-028, 05-REQ-031, 05-REQ-032, 05-REQ-032a, 05-REQ-033, 05-REQ-036, 05-REQ-038.
+
+The game lifecycle is a state machine with three states: `not-started → playing → finished`. The orchestration pipeline manages the `not-started → playing` transition as a Convex action (not a mutation, because it makes external HTTP calls to SpacetimeDB and nominated server domains).
+
+#### 2.3.1 Game-Start Orchestration Action
+
+```typescript
+action startGame(args: { gameId: Id<"games"> }): void
+```
+
+**Preconditions** (checked in a mutation called at the start of the action):
+1. Game exists and has `status === "not-started"`.
+2. Game's room has at least 2 enrolled teams.
+3. All enrolled teams have declared ready (their team ID is in `readyTeamIds`).
+4. If not `skipStartConfirmation`, the administrative actor has confirmed.
+5. All enrolled teams have a non-null `nominatedServerDomain`.
+6. All enrolled teams are not archived.
+
+**Orchestration sequence** (05-REQ-032):
+
+**Step 1 — Config freeze**. The action reads the game's config. From this point, the config is treated as frozen (the game record is about to leave `not-started` status, preventing further edits).
+
+**Step 2 — Board generation**. If `lockedBoardPreview` is non-null on the game record, use it directly. Otherwise, invoke `generateBoardAndInitialState()` from the shared engine codebase within a Convex mutation. The mutation generates a cryptographic root seed via `crypto.getRandomValues(new Uint8Array(32))`, constructs the `GameConfig` (Module 01 §3.3) from the platform config fields, and calls the function. If all bounded-retry attempts fail ([01-REQ-061]), the mutation throws a `BoardGenerationFailure` error and the action aborts, returning the game to `not-started` with the error surfaced reactively.
+
+**Step 3 — Healthcheck**. For non-tournament games: the action calls each enrolled team's healthcheck endpoint (`GET https://{nominatedServerDomain}/.well-known/snek-healthcheck`). If any team's server is unhealthy, the action aborts: a mutation writes the healthcheck failures to the game record's `healthcheckFailures` field and the game remains in `not-started`. For tournament games: healthcheck is skipped per 05-REQ-036(b).
+
+**Step 4 — STDB provisioning**. The action retrieves the active WASM binary from Convex file storage (`wasm_modules` table where `active === true`), then calls `POST /v1/database` on the self-hosted SpacetimeDB management API with the binary, authenticated via a Convex self-issued management JWT per [03] §3.22. The response provides the instance URL and module name.
+
+**Step 5 — Instance initialization**. The action calls `POST /v1/database/{name}/call/initialize_game` on the STDB instance with an `InitializeGameParams` payload (Module 04 §3.1). The payload includes: pre-computed initial state (board, snakes, items), the game seed (`boardSeed`), dynamic gameplay parameters, the game-end callback URL (a Convex HTTP action endpoint), a game-outcome callback token (an RS256-signed JWT with `iss: CONVEX_SITE_URL`, `sub: "stdb-instance:{gameId}"`, `aud: callbackUrl`, `exp: iat + 7200`), the participating-teams roster, and the game's Convex document `_id` as the gameId. The callback token is not stored by Convex — the STDB module stores it and presents it back to Convex on game-end; Convex validates it by signature verification and claims checking. *(Amended per 05-REVIEW-015 resolution.)*
+
+**Step 6 — Game credential issuance and invitations**. For each participating team, the action calls `issueGameCredential(centaurTeamId, gameId)` from [03] to generate a per-team game credential JWT. The action then sends game invitations via `POST https://{nominatedServerDomain}/.well-known/snek-game-invite` with a `GameInvitationPayload` (Module 03 §4.7) containing the credential, STDB URL, module name, game config, and team roster. Each invitation must be accepted within 10 seconds. If any server rejects or times out, the action tears down the STDB instance and returns the game to `not-started` with an invitation failure error.
+
+**Step 7 — Centaur state initialization**. For each participating team, the action calls `initializeGameCentaurState({ gameId, centaurTeamId, snakeIds })` from [06] to set up the Centaur subsystem's game-scoped state.
+
+**Step 8 — Status transition**. A final mutation atomically updates the game record: sets `status` to `"playing"`, writes `stdbInstanceUrl`, `stdbModuleName`, `startedAt`, and `boardSeed`. The game is now live. *(Amended per 05-REVIEW-015 resolution: `gameEndCallbackToken` removed from game record.)*
+
+**Error handling**: If any step after STDB provisioning fails, the action tears down the provisioned STDB instance before returning the game to `not-started`. This prevents orphaned instances per 05-REQ-033.
+
+#### 2.3.2 Game-End HTTP Action Endpoint
+
+```typescript
+httpAction gameEndCallback(request: Request): Response
+```
+
+Satisfies 05-REQ-038. This HTTP action endpoint receives `GameEndNotification` payloads (Module 04 §3.3) from STDB instances.
+
+**Authentication**: The request must include a `Bearer` token in the `Authorization` header. The action validates the token by:
+1. Decoding the JWT and verifying the RS256 signature against the `SPACETIMEDB_SIGNING_KEY` public key.
+2. Checking `iss === CONVEX_SITE_URL`.
+3. Checking `aud` matches this endpoint's URL (the `gameEndCallbackUrl` registered at init time).
+4. Extracting the gameId from `sub` (format `"stdb-instance:{gameId}"`).
+5. Verifying `exp` has not passed.
+6. Loading the game record and confirming the game's status is `"playing"`.
+
+No stored-token comparison is performed — the JWT is a self-contained proof of authority; its signature and claims are sufficient for validation. *(Amended per 05-REVIEW-015 resolution.)*
+
+**Processing**:
+1. Parse the `GameEndNotification` payload: `{ gameId, outcome, finalTurn, replayData }`.
+2. For normal outcomes (victory, draw):
+   a. Run **defensive validation** (05-REQ-042): scan all `stagedBy` fields in the `replayData.staged_moves` data to verify they contain `Agent` values (not raw SpacetimeDB Identities).
+   b. Serialize the `replayData` as JSON and store it in Convex file storage via `ctx.storage.store(blob)`.
+   c. Create a `replays` record linking the game to the storage ID.
+   d. Transition the game to `finished` via a mutation: set `status` to `"finished"`, write `outcome`, `finalTurn`, and `finishedAt`.
+   e. Tear down the STDB instance: call `DELETE /v1/database/{name}` on the SpacetimeDB management API, authenticated per [03] §3.22.
+3. For error outcomes: tear down the STDB instance directly (no replay persistence). Transition the game to `finished` with the error outcome.
+4. Fire webhook notifications asynchronously (Section 2.9).
+5. If non-tournament: auto-create the next game (Section 2.6).
+6. If tournament: advance to the next round or complete the tournament (Section 2.10).
+7. Call `cleanupGameCentaurState({ gameId })` from [06] to clear selection records.
+
+---
+
+### 2.4 Board Generation Preview and Lock-In
+
+Satisfies 05-REQ-032b, 05-REQ-032c.
+
+**Preview mutation**:
+
+```typescript
+mutation generateBoardPreview(args: {
+  gameId: Id<"games">
+}): { board: any; snakes: any; items: any } | { error: BoardGenerationFailure }
+```
+
+Called when the administrative actor requests a board preview for the current not-started game. The mutation:
+1. Reads the game's current config.
+2. Generates a cryptographic root seed.
+3. Constructs the `GameConfig` for `generateBoardAndInitialState()` from the game's config fields.
+4. Calls `generateBoardAndInitialState()` with bounded-retry logic per [01-REQ-061].
+5. On success, returns the board state. On failure, returns the structured `BoardGenerationFailure`.
+
+The preview result is not persisted automatically; the client decides whether to lock it in.
+
+**Lock-in mutation**:
+
+```typescript
+mutation lockBoardPreview(args: {
+  gameId: Id<"games">
+  boardPreview: any
+  boardSeed: ArrayBuffer
+}): void
+```
+
+Persists the given board state and seed to the game record's `lockedBoardPreview` and `boardSeed` fields. Only succeeds if the game is in `not-started` status.
+
+**Unlock mutation**:
+
+```typescript
+mutation unlockBoardPreview(args: {
+  gameId: Id<"games">
+}): void
+```
+
+Clears the `lockedBoardPreview` and `boardSeed` fields, causing a fresh board to be generated at game start.
+
+---
+
+### 2.5 Ready Check and Auto-Create
+
+Satisfies 05-REQ-031, 05-REQ-039. Resolved per 05-REVIEW-007, 05-REVIEW-008.
+
+**Ready check**: Readiness is tracked in the game record's `readyTeamIds` array. Only the Captain of a Centaur Team can declare their team ready:
+
+```typescript
+mutation declareReady(args: {
+  gameId: Id<"games">
+  centaurTeamId: Id<"centaur_teams">
+}): void
+```
+
+Preconditions:
+1. Game exists and has `status === "not-started"`.
+2. The calling user is the Captain of the specified team.
+3. The team is enrolled in the game's room.
+4. The team is not already in `readyTeamIds`.
+
+The mutation appends the team ID to `readyTeamIds`. A corresponding `undeclareReady` mutation removes it.
+
+**Auto-create** (05-REVIEW-008 resolution): When a non-tournament game transitions to `finished`, a mutation atomically:
+1. Copies the finished game's `config` into a new game document.
+2. Sets the new game's `status` to `"not-started"`, clears `readyTeamIds`, `lockedBoardPreview`, `boardSeed`, `healthcheckFailures`, `outcome`, `finalTurn`, and all timestamp/STDB fields.
+3. Updates the room's `currentGameId` to point to the new game.
+
+Convex's built-in mutation atomicity prevents race conditions with concurrent edits. The new game's config can be edited by the administrative actor before the next game start.
+
+---
+
+### 2.6 OIDC Discovery Endpoints
+
+Satisfies 05-REQ-034, 05-REQ-034a.
+
+Two HTTP actions served at `CONVEX_SITE_URL`:
+
+**`GET /.well-known/openid-configuration`**:
+
+```typescript
+httpAction openidConfiguration(request: Request): Response {
+  const issuer = process.env.CONVEX_SITE_URL
+  return new Response(JSON.stringify({
+    issuer,
+    jwks_uri: `${issuer}/.well-known/jwks.json`,
+    id_token_signing_alg_values_supported: ["RS256"],
+    subject_types_supported: ["public"],
+  }), {
+    headers: { "Content-Type": "application/json" },
+  })
+}
+```
+
+**`GET /.well-known/jwks.json`**:
+
+```typescript
+httpAction jwks(request: Request): Response {
+  const privateKeyPem = process.env.SPACETIMEDB_SIGNING_KEY
+  const publicKey = deriveRsaPublicKey(privateKeyPem)
+  const jwk = exportJwk(publicKey)
+  return new Response(JSON.stringify({ keys: [jwk] }), {
+    headers: { "Content-Type": "application/json" },
+  })
+}
+```
+
+The RSA private key is read from the `SPACETIMEDB_SIGNING_KEY` environment variable. The public key is derived from it using standard crypto operations (`crypto.subtle.importKey` + `crypto.subtle.exportKey`). The JWK includes `kty`, `n`, `e`, `alg: "RS256"`, `use: "sig"`, and a `kid` derived from the key's thumbprint.
+
+**Design rationale**: The public key derivation and JWK export happen on every request rather than being cached, because Convex actions are stateless. In practice, Convex's HTTP action infrastructure handles caching at the infrastructure level.
+
+---
+
+### 2.7 SpacetimeDB Access Token Issuance
+
+Satisfies 05-REQ-035, 05-REQ-030.
+
+Two Convex action endpoints issue SpacetimeDB access tokens:
+
+**Operator access token** (for human operators authenticated via Google OAuth):
+
+```typescript
+action issueOperatorAccessToken(args: {
+  gameId: Id<"games">
+}): string
+```
+
+Authorization:
+1. Resolve the caller's identity via `resolveIdentity()` from [03]; must be `kind: 'human'`.
+2. Load the game record; verify `status === "playing"`.
+3. Query `game_teams` for the game; verify the caller's `userId` appears in at least one team's `rosterSnapshot`.
+4. Determine the `sub` claim: `"operator:{users._id}"`.
+5. Call `issueSpacetimeDbAccessToken(gameId, sub)` from [03] and return the JWT.
+
+**Bot access token** (for Snek Centaur Servers authenticated via game credential):
+
+```typescript
+action issueBotAccessToken(args: {
+  gameId: Id<"games">
+}): string
+```
+
+Authorization:
+1. Resolve the caller's identity via `resolveIdentity()` from [03]; must be `kind: 'centaur_team_credential'`.
+2. Verify the credential's `gameId` matches the requested game.
+3. Load the game record; verify `status === "playing"`.
+4. Query `game_teams` to confirm the credential's `centaurTeamId` is a participant.
+5. Determine the `sub` claim: `"centaur:{centaurTeamId}"`.
+6. Call `issueSpacetimeDbAccessToken(gameId, sub)` from [03] and return the JWT.
+
+**Spectator access token** (for any authenticated human):
+
+```typescript
+action issueSpectatorAccessToken(args: {
+  gameId: Id<"games">
+}): string
+```
+
+Authorization:
+1. Resolve the caller's identity via `resolveIdentity()` from [03]; must be `kind: 'human'`.
+2. Load the game record; verify `status === "playing"`.
+3. Determine the `sub` claim: `"spectator:{users._id}"`.
+4. Call `issueSpacetimeDbAccessToken(gameId, sub)` from [03] and return the JWT.
+
+All three endpoints refuse to issue tokens when `status === "finished"` per 05-REQ-035.
+
+---
+
+### 2.8 HTTP API
+
+Satisfies 05-REQ-045, 05-REQ-047, 05-REQ-048, 05-REQ-049, 05-REQ-050.
+
+The HTTP API is implemented as Convex HTTP actions at `CONVEX_SITE_URL/api/v1/*`. All requests are authenticated via bearer API key, validated using `validateApiKey()` from [03]. After validation, the handler calls `isAdmin(validatedKey.ownerEmail)` from [03] to confirm admin status; if not admin, the request is rejected with `403 Forbidden`.
+
+**Common request/response conventions**:
+- Content-Type: `application/json`
+- Success: HTTP 200 with JSON body
+- Not found: HTTP 404
+- Validation error: HTTP 400 with `{ error: string }`
+- Auth error: HTTP 401 (missing/invalid key) or 403 (not admin)
+- Conflict: HTTP 409 (e.g., roster freeze)
+
+#### Endpoint families:
+
+**Centaur Teams** (`/api/v1/teams`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/teams` | List teams (excludes archived by default; `?includeArchived=true` to include) |
+| GET | `/api/v1/teams/:id` | Read team details including members |
+| POST | `/api/v1/teams` | Create team: `{ name, displayColour, captainEmail }` |
+| PATCH | `/api/v1/teams/:id` | Update team: `{ name?, displayColour?, nominatedServerDomain? }` |
+| POST | `/api/v1/teams/:id/members` | Add member: `{ email, role }` |
+| DELETE | `/api/v1/teams/:id/members/:userId` | Remove member |
+
+**Rooms** (`/api/v1/rooms`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/rooms` | List rooms (excludes archived by default) |
+| GET | `/api/v1/rooms/:id` | Read room including current game ID |
+| POST | `/api/v1/rooms` | Create room: `{ name, ownerEmail? }` |
+| PATCH | `/api/v1/rooms/:id` | Update room: `{ name? }` |
+| POST | `/api/v1/rooms/:id/enroll` | Enroll team: `{ centaurTeamId }` |
+| DELETE | `/api/v1/rooms/:id/enroll/:teamId` | Unenroll team |
+
+**Games** (`/api/v1/games`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/games/:id` | Read game state including config, status, outcome |
+| POST | `/api/v1/rooms/:roomId/start` | Start game in room (triggers 05-REQ-032) |
+| PATCH | `/api/v1/games/:id/config` | Update game config (only while not-started) |
+
+**Webhooks** (`/api/v1/webhooks`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/webhooks` | List registered webhooks |
+| POST | `/api/v1/webhooks` | Register: `{ url, eventTypes, scopeType, scopeId }` |
+| DELETE | `/api/v1/webhooks/:id` | Delete webhook |
+
+All mutations through the HTTP API are subject to the same invariants as frontend actions per 05-REQ-050, including roster freeze checks.
+
+---
+
+### 2.9 Webhook Delivery
+
+Satisfies 05-REQ-053, 05-REQ-054, 05-REQ-055, 05-REQ-056, 05-REQ-057, 05-REQ-058.
+
+**Delivery trigger**: When a game transitions to `playing` or `finished`, a Convex mutation queries the `webhooks` table for active subscriptions matching the game (by game ID for game-scoped webhooks, by room ID for room-scoped webhooks) and the event type. For each matching webhook, it creates a `webhook_delivery_attempts` record and schedules a delivery action.
+
+**Delivery action**:
+
+```typescript
+action deliverWebhook(args: {
+  deliveryAttemptId: Id<"webhook_delivery_attempts">
+}): void
+```
+
+The action:
+1. Loads the delivery attempt, webhook, and game records.
+2. Verifies the webhook's API key is not revoked (per 05-REQ-058).
+3. Constructs the notification payload with an idempotency key (`{gameId}:{eventType}:{webhookId}`).
+4. Sends an HTTP POST to the webhook URL with the payload.
+5. On success (2xx response): marks the delivery attempt as `succeeded`.
+6. On failure: marks the attempt as `failed` and schedules a retry if the retry budget is not exhausted.
+
+**Retry schedule**: Exponential backoff with a maximum of 5 retries: 1s, 5s, 25s, 125s, 625s (~10 min total). Each retry creates a new `webhook_delivery_attempts` record with an incremented `attemptNumber`.
+
+**Non-blocking delivery** (05-REQ-057): Webhook delivery is scheduled via `ctx.scheduler.runAfter(0, ...)`, which ensures the game lifecycle transition completes before delivery attempts begin. Delivery failures never block the game state machine.
+
+**Webhook notification payload**:
+
+```typescript
+interface WebhookNotification {
+  readonly eventType: "game_start" | "game_end"
+  readonly idempotencyKey: string
+  readonly timestamp: number
+  readonly gameId: string
+  readonly roomId: string
+  readonly config: GameConfig
+  readonly outcome?: GameOutcome
+}
+```
+
+For `game_start`: includes the game's frozen config snapshot. For `game_end`: includes the game's outcome and final scores.
+
+---
+
+### 2.10 Tournament Mode Lifecycle
+
+Satisfies 05-REQ-059, 05-REQ-060, 05-REQ-061, 05-REQ-062, 05-REQ-063, 05-REQ-064.
+
+**Tournament creation**: When a game with `tournamentMode === true` is started, the game-start orchestration creates a `tournaments` record before proceeding with round 1:
+
+1. Create a tournament record with: `roomId`, `totalRounds` (from config), `interludeSeconds` (from config), `scheduledStartTime` (from config), `currentRound: 1`, `status: "scheduled"`, `enrolledTeamIds` (snapshot of room's enrolled teams), and `baseConfig` (the game's config with `tournamentMode` set to `false` and tournament meta-parameters nulled). The tournament transitions from `"scheduled"` to `"in_progress"` at the moment the first round's game-start orchestration begins (i.e., when round 1 transitions to `playing`). This is the point at which the tournament-wide roster freeze (Section 2.15) takes effect.
+2. Set the game's `tournamentId` and `tournamentRound: 1`.
+3. If `scheduledStartTime` is in the future, schedule the game-start action to run at that time via `ctx.scheduler.runAt(scheduledStartTime, ...)`. The game remains in `not-started` until then.
+4. If `scheduledStartTime` is now or in the past, proceed with immediate game-start.
+
+**Round chaining**: When a tournament-round game transitions to `finished`, the game-end handler checks the tournament:
+1. Load the tournament record.
+2. If `currentRound < totalRounds`: schedule the next round after `interludeSeconds` delay via `ctx.scheduler.runAfter(interludeSeconds * 1000, ...)`. The scheduled action creates a new game with `baseConfig`, sets `tournamentId`, `tournamentRound: currentRound + 1`, and starts it immediately (no ready check for tournament rounds — tournament games auto-start on schedule per 05-REVIEW-009).
+3. If `currentRound === totalRounds`: set tournament `status` to `"completed"`. Do not auto-create a new game per 05-REQ-063.
+
+**Tournament-wide roster freeze** (05-REVIEW-003 resolution): The roster freeze check in team mutation functions (Section 2.16) is extended to check whether the team is enrolled in any tournament with `status === "in_progress"`. This ensures rosters remain frozen during inter-round interludes.
+
+**Config inheritance** (05-REQ-062): Each round-game's config is the tournament's `baseConfig`, which excludes tournament meta-parameters. All rounds share the same gameplay configuration.
+
+---
+
+### 2.11 Admin Role and Game Privacy / Replay Access Control
+
+Satisfies 05-REQ-065, 05-REQ-066, 05-REQ-067, 05-REQ-068, 05-REQ-069, 05-REQ-070, 05-REQ-071, 05-REQ-072.
+
+**Admin designation** (05-REQ-068): Admin is determined by `isAdmin(email)` from [03] §4.5, which reads the `ADMIN_EMAILS` environment variable. No admin flag is stored in the `users` table — admin status is derived from the env var on every check.
+
+**Admin enforcement**: Admin checks are applied in:
+- HTTP API handlers (Section 2.8): all requests require admin.
+- Team/game/replay queries: admin users bypass team-membership filters.
+- Replay access: admin users see all within-turn actions regardless of game privacy.
+
+**Game privacy gating** (05-REQ-069–072):
+
+The game record's `config.gamePrivacy` field controls replay access. Privacy is enforced in the replay query interface:
+
+```typescript
+query getReplay(args: {
+  gameId: Id<"games">
+}): ReplayData
+```
+
+The query logic:
+1. Load the game record and its `game_teams` entries.
+2. Determine the viewing user's identity via `resolveIdentity()`.
+3. If the user is admin (`isAdmin(email)`): return full replay including all teams' within-turn actions from [06]'s `centaur_action_log`.
+4. If `config.gamePrivacy === false`: return full replay for all teams.
+5. If `config.gamePrivacy === true`: return the board-level replay (game log from STDB) for all users, but restrict within-turn Centaur action log data to only the teams the user was a member of (resolved from `game_teams.rosterSnapshot`).
+
+The privacy gate applies only to Centaur subsystem data (action log, stateMap, heuristic outputs, etc.) from [06]. Board-level data (snake states, items, turn events) is always visible.
+
+---
+
+### 2.12 WASM Module Binary Storage
+
+Satisfies 05-REQ-073.
+
+The `wasm_modules` table stores references to WASM binaries uploaded to Convex file storage. The platform build pipeline uploads the compiled STDB game module binary via:
+
+```typescript
+mutation uploadWasmModule(args: {
+  storageId: Id<"_storage">
+}): Id<"wasm_modules">
+```
+
+The mutation:
+1. Creates a new `wasm_modules` record with `active: true`.
+2. Sets all previously active records to `active: false`.
+
+At game-start time, the orchestration action queries `wasm_modules` for the record with `active === true` and retrieves the binary from file storage via `ctx.storage.get(storageId)`.
+
+**Design rationale**: Only one WASM module is active at a time. The `active` flag enables atomic switching when a new build is deployed, while preserving historical records for auditing.
+
+---
+
+### 2.13 Replay Persistence
+
+Satisfies 05-REQ-040, 05-REQ-041, 05-REQ-042, 05-REQ-043, 05-REQ-044.
+
+Replay persistence is performed inline within the game-end HTTP action (Section 2.3.2), not as a separately scheduled step. The STDB procedure bundles the complete historical record into the `GameEndNotification` payload (see [04] §2.10, §2.11), so Convex receives the replay data in the same request that reports the game outcome.
+
+The processing steps (for normal outcomes) are:
+1. Extract `replayData` from the notification payload.
+2. **Defensive validation** (05-REQ-042): scan all `stagedBy` fields in the `replayData.staged_moves` data to verify they contain `Agent` values (not raw SpacetimeDB Identities). Under the current architecture this check should never fail — `stagedBy` is resolved at `client_connected` time — but the validation guards against implementation bugs.
+3. Serialize the `replayData` as JSON.
+4. Store the JSON in Convex file storage via `ctx.storage.store(blob)`.
+5. Create a `replays` record linking the game to the storage ID.
+
+**Replay data shape**: The replay is stored as a single JSON document containing all STDB tables. The shape matches the union of all tables described in [04] §2.11. This document is sufficient, in combination with [06]'s `centaur_action_log` entries for the game, to reconstruct the complete game history per 05-REQ-041.
+
+**Instance teardown**: Immediately after successful replay persistence (or immediately for error outcomes), the game-end HTTP action calls `DELETE /v1/database/{name}` on the SpacetimeDB management API, authenticated per [03] §3.22. This fulfills 05-REQ-037. Because the replay data is already in hand, the STDB instance is no longer needed and can be torn down without delay.
+
+*(Amended per 05-REVIEW-015 resolution: replaced Convex-pull replay retrieval with inline processing of bundled replay data. Teardown is synchronous within the HTTP action, not a separate scheduled step.)*
+
+---
+
+### 2.14 Healthcheck
+
+Satisfies 05-REQ-009, 05-REQ-036.
+
+**On-demand healthcheck action**:
+
+```typescript
+action checkServerHealth(args: {
+  centaurTeamId: Id<"centaur_teams">
+}): { healthy: boolean; message?: string }
+```
+
+The action:
+1. Loads the team record; reads `nominatedServerDomain`.
+2. Calls `GET https://{nominatedServerDomain}/.well-known/snek-healthcheck` with a 5-second timeout.
+3. A 200 response is considered healthy; any other response or timeout is unhealthy.
+4. Updates the team record's `healthcheckStatus` and `healthcheckTimestamp` via a mutation.
+5. Returns the result.
+
+**Game-start healthcheck** (05-REQ-036): During game-start orchestration (Section 2.3.1 step 3), the action checks all participating teams' servers. For non-tournament games, any unhealthy server aborts the start. For tournament games, healthcheck failures are ignored.
+
+---
+
+### 2.15 Roster Freeze Enforcement
+
+Satisfies 05-REQ-013, 05-REQ-014, [03-REQ-046], 05-REQ-064.
+
+All mutations that modify a Centaur Team's roster (member add/remove, Captain transfer, `nominatedServerDomain` change) include a precondition check:
+
+```typescript
+function assertNotFrozen(centaurTeamId: Id<"centaur_teams">): void
+```
+
+The check queries:
+1. `game_teams` joined with `games` to find any game where this team participates and `status === "playing"`.
+2. `tournaments` to find any tournament where this team is in `enrolledTeamIds` and `status === "in_progress"`.
+
+If either query returns results, the mutation throws an error indicating the team's roster is frozen.
+
+**Tournament-wide freeze** (05-REVIEW-003): The tournament check ensures rosters remain frozen during inter-round interludes, not just during active rounds. A tournament transitions from `"in_progress"` to `"completed"` only when the final round finishes.
+
+---
+
+## Exported Interfaces
+
+This section defines the minimal contract downstream modules ([07] and [08]) consume. Any type not listed here is a module-internal detail.
+
+### 3.1 Platform Table Schema Types
+
+Motivated by 05-REQ-001, 05-REQ-003, 05-REQ-027. Consumed by [08] for UI rendering and data subscription.
+
+The platform-wide Convex tables defined in Section 2.1 are exported as the platform schema. Downstream modules subscribe to these tables via Convex's reactive query system. The 12 platform tables are: `users`, `centaur_teams`, `centaur_team_members`, `rooms`, `games`, `game_teams`, `replays`, `api_keys`, `webhooks`, `wasm_modules`, `tournaments`, and `webhook_delivery_attempts`.
+
+These table names are guaranteed not to collide with Module 06's 8 Centaur-subsystem table names. Together, the platform tables and Centaur-subsystem tables form the single Convex deployment's schema.
+
+**Exported table document types**:
+
+```typescript
+interface UserDoc {
+  readonly _id: Id<"users">
+  readonly email: string
+  readonly displayName: string
+  readonly createdAt: number
+  readonly archived: boolean
+}
+
+interface CentaurTeamDoc {
+  readonly _id: Id<"centaur_teams">
+  readonly name: string
+  readonly displayColour: string
+  readonly captainId: Id<"users">
+  readonly nominatedServerDomain: string | null
+  readonly archived: boolean
+  readonly healthcheckStatus: "healthy" | "unhealthy" | "unknown" | null
+  readonly healthcheckTimestamp: number | null
+}
+
+interface CentaurTeamMemberDoc {
+  readonly _id: Id<"centaur_team_members">
+  readonly centaurTeamId: Id<"centaur_teams">
+  readonly userId: Id<"users">
+}
+
+interface RoomDoc {
+  readonly _id: Id<"rooms">
+  readonly name: string
+  readonly ownerId: Id<"users"> | null
+  readonly currentGameId: Id<"games"> | null
+  readonly enrolledTeamIds: ReadonlyArray<Id<"centaur_teams">>
+  readonly archived: boolean
+  readonly createdAt: number
+}
+
+interface GameDoc {
+  readonly _id: Id<"games">
+  readonly roomId: Id<"rooms">
+  readonly config: GameConfig
+  readonly status: "not-started" | "playing" | "finished"
+  readonly stdbInstanceUrl: string | null
+  readonly stdbModuleName: string | null
+  readonly outcome: GameOutcome | null
+  readonly finalTurn: number | null
+  readonly createdAt: number
+  readonly startedAt: number | null
+  readonly finishedAt: number | null
+  readonly readyTeamIds: ReadonlyArray<Id<"centaur_teams">>
+  readonly healthcheckFailures: ReadonlyArray<{
+    readonly centaurTeamId: Id<"centaur_teams">
+    readonly message: string
+  }> | null
+  readonly lockedBoardPreview: any | null
+  readonly tournamentId: Id<"tournaments"> | null
+  readonly tournamentRound: number | null
+}
+
+interface GameTeamDoc {
+  readonly _id: Id<"game_teams">
+  readonly gameId: Id<"games">
+  readonly centaurTeamId: Id<"centaur_teams">
+  readonly rosterSnapshot: ReadonlyArray<{
+    readonly userId: Id<"users">
+    readonly email: string
+    readonly isCaptain: boolean
+  }>
+}
+
+interface TournamentDoc {
+  readonly _id: Id<"tournaments">
+  readonly roomId: Id<"rooms">
+  readonly totalRounds: number
+  readonly interludeSeconds: number
+  readonly scheduledStartTime: number
+  readonly currentRound: number
+  readonly status: "scheduled" | "in_progress" | "completed"
+  readonly enrolledTeamIds: ReadonlyArray<Id<"centaur_teams">>
+  readonly baseConfig: GameConfig
+  readonly createdAt: number
+}
+```
+
+### 3.2 Game Lifecycle State Machine Types
+
+Motivated by 05-REQ-027, 05-REQ-028. Consumed by [08] for UI state management.
+
+```typescript
+type GameStatus = "not-started" | "playing" | "finished"
+
+type GameOutcome =
+  | { readonly kind: "victory"; readonly winnerCentaurTeamId: string;
+      readonly scores: Record<string, number> }
+  | { readonly kind: "draw"; readonly tiedCentaurTeamIds: ReadonlyArray<string>;
+      readonly scores: Record<string, number> }
+  | { readonly kind: "error"; readonly reason: string }
+```
+
+`GameOutcome` matches Module 04 §3.3's `GameOutcome` type. The `scores` keys are Convex `centaur_teams._id` strings.
+
+**State transitions** (exported as an architectural constraint):
+
+```
+not-started ──[start orchestration succeeds]──► playing ──[game-end notification]──► finished
+     ▲                                                                                  │
+     └──────────────────[auto-create (non-tournament)]──────────────────────────────────┘
+```
+
+### 3.3 Game Configuration Types
+
+Motivated by 05-REQ-022, 05-REQ-023. Consumed by [08] for config editing UI and by [07] transitively.
+
+```typescript
+interface GameConfig {
+  readonly boardSize: "small" | "medium" | "large" | "giant"
+  readonly maxTurnTimeSec: number
+  readonly firstTurnTimeSec: number
+  readonly initialTimeBudgetSec: number
+  readonly budgetIncrementMs: number
+  readonly snakesPerTeam: number
+  readonly maxTurns: number | null
+  readonly maxHealth: number
+  readonly hazardPercent: number
+  readonly hazardDamage: number
+  readonly foodSpawnRate: number
+  readonly fertileGround: boolean
+  readonly fertileDensity: number
+  readonly fertileClustering: number
+  readonly invulnPotions: boolean
+  readonly invulnPotionSpawnRate: number
+  readonly invisPotions: boolean
+  readonly invisPotionSpawnRate: number
+  readonly skipStartConfirmation: boolean
+  readonly tournamentMode: boolean
+  readonly tournamentRounds: number | null
+  readonly tournamentInterludeSec: number | null
+  readonly scheduledStartTime: number | null
+  readonly gamePrivacy: boolean
+}
+```
+
+The field names in `GameConfig` correspond to the parameter table in 05-REQ-023. The mapping to Module 01's `GameConfig` (§3.3) and Module 04's `DynamicGameplayParams` (§3.1) is a straightforward field-by-field translation performed by the game-start orchestration action.
+
+### 3.4 Access Token Issuance Endpoint Contract
+
+Motivated by 05-REQ-035, 05-REQ-030. Consumed by [08] for operator and spectator SpacetimeDB connections.
+
+```typescript
+interface AccessTokenIssuanceContract {
+  readonly operatorToken: {
+    readonly action: "issueOperatorAccessToken"
+    readonly input: { readonly gameId: Id<"games"> }
+    readonly auth: "Google OAuth (human identity)"
+    readonly precondition: "game status === 'playing' AND user is member of participating team"
+    readonly output: "RS256-signed JWT with sub: 'operator:{users._id}'"
+  }
+  readonly botToken: {
+    readonly action: "issueBotAccessToken"
+    readonly input: { readonly gameId: Id<"games"> }
+    readonly auth: "Per-Centaur-Team game credential"
+    readonly precondition: "game status === 'playing' AND credential team is participating"
+    readonly output: "RS256-signed JWT with sub: 'centaur:{centaur_teams._id}'"
+  }
+  readonly spectatorToken: {
+    readonly action: "issueSpectatorAccessToken"
+    readonly input: { readonly gameId: Id<"games"> }
+    readonly auth: "Google OAuth (any authenticated human)"
+    readonly precondition: "game status === 'playing'"
+    readonly output: "RS256-signed JWT with sub: 'spectator:{users._id}'"
+  }
+}
+```
+
+**DOWNSTREAM IMPACT**: [08] must call `issueOperatorAccessToken` for operators connecting to SpacetimeDB during live gameplay, `issueBotAccessToken` for Snek Centaur Server bot connections (using the game credential received via invitation), and `issueSpectatorAccessToken` for spectator connections.
+
+### 3.5 Replay Query Interface
+
+Motivated by 05-REQ-040, 05-REQ-041, 05-REQ-070, 05-REQ-071, 05-REQ-072. Consumed by [08]'s replay viewer.
+
+```typescript
+interface ReplayQueryContract {
+  readonly getReplay: {
+    readonly query: "getReplay"
+    readonly input: { readonly gameId: Id<"games"> }
+    readonly auth: "Google OAuth (authenticated human)"
+    readonly output: {
+      readonly gameLog: ReplayGameLog
+      readonly visibleTeamIds: ReadonlyArray<Id<"centaur_teams">>
+    }
+  }
+}
+
+interface ReplayGameLog {
+  readonly gameConfig: any
+  readonly boardState: any
+  readonly teams: any
+  readonly turns: any
+  readonly snakeStates: any
+  readonly itemLifetimes: any
+  readonly stagedMoves: any
+  readonly timeBudgetStates: any
+  readonly turnEvents: any
+}
+```
+
+The `visibleTeamIds` field indicates which teams' within-turn Centaur action log data the current user may access. For non-private games: all participating team IDs. For private games: only the teams the user belonged to. For admins: all teams regardless of privacy.
+
+The replay viewer in [08] uses `visibleTeamIds` to filter its queries to [06]'s `getActionLog` — only fetching action log entries for visible teams.
+
+**DOWNSTREAM IMPACT**: [08]'s replay viewer must respect `visibleTeamIds` when querying [06]'s Centaur action log. Board-level replay data (`gameLog`) is always fully visible; privacy gating applies only to the Centaur subsystem's within-turn data.
+
+### 3.6 Game-Start Orchestration Contract
+
+Motivated by 05-REQ-032. Coordinates with [06]'s `initializeGameCentaurState`.
+
+```typescript
+interface GameStartOrchestrationContract {
+  readonly trigger: "administrative actor initiates game start"
+  readonly preconditions: readonly [
+    "game status === 'not-started'",
+    "at least 2 enrolled teams",
+    "all enrolled teams have declared ready (or tournament auto-start)",
+    "all teams have non-null nominatedServerDomain",
+  ]
+  readonly sequence: readonly [
+    "1. Freeze game config",
+    "2. Board generation (locked preview or fresh)",
+    "3. Healthcheck (manual games only)",
+    "4. STDB provisioning (POST /v1/database with WASM binary)",
+    "5. Instance initialization (initialize_game reducer)",
+    "6. Game credential issuance + invitation dispatch (10s timeout)",
+    "7. Centaur state initialization via initializeGameCentaurState() [06]",
+    "8. Status transition to 'playing'",
+  ]
+  readonly gameEndOrchestration: readonly [
+    "1. Receive GameEndNotification (with bundled replayData) at callback endpoint",
+    "2. Validate callback token (JWT signature + claims, no stored-token check)",
+    "3. Persist replay from bundled replayData to file storage",
+    "4. Transition game to 'finished', record outcome",
+    "5. Teardown STDB instance (immediate, within same HTTP action)",
+    "6. Cleanup Centaur state via cleanupGameCentaurState() [06]",
+    "7. Auto-create next game (non-tournament) or advance tournament round",
+    "8. Fire webhook notifications",
+  ]
+}
+```
+
+**DOWNSTREAM IMPACT**: [06] must expose `initializeGameCentaurState` and `cleanupGameCentaurState` mutations that [05] calls during game-start and game-end orchestration respectively. The `snakeIds` parameter passed to `initializeGameCentaurState` must match the snake IDs from `generateBoardAndInitialState()`.
+
+### 3.7 HTTP API Contract
+
+Motivated by 05-REQ-045, 05-REQ-049. Consumed by external API clients.
+
+```typescript
+interface HttpApiContract {
+  readonly authentication: "Bearer API key (admin-only)"
+  readonly baseUrl: "CONVEX_SITE_URL/api/v1"
+  readonly endpoints: {
+    readonly teams: readonly [
+      "GET /teams", "GET /teams/:id", "POST /teams",
+      "PATCH /teams/:id", "POST /teams/:id/members",
+      "DELETE /teams/:id/members/:userId"
+    ]
+    readonly rooms: readonly [
+      "GET /rooms", "GET /rooms/:id", "POST /rooms",
+      "PATCH /rooms/:id", "POST /rooms/:id/enroll",
+      "DELETE /rooms/:id/enroll/:teamId"
+    ]
+    readonly games: readonly [
+      "GET /games/:id", "POST /rooms/:roomId/start",
+      "PATCH /games/:id/config"
+    ]
+    readonly webhooks: readonly [
+      "GET /webhooks", "POST /webhooks", "DELETE /webhooks/:id"
+    ]
+  }
+  readonly errorCodes: {
+    readonly 400: "Validation error"
+    readonly 401: "Missing or invalid API key"
+    readonly 403: "API key creator is not admin"
+    readonly 404: "Resource not found"
+    readonly 409: "Conflict (e.g., roster freeze)"
+  }
+}
+```
+
+### 3.8 DOWNSTREAM IMPACT Notes
+
+1. **[08] must implement the game config editing UI against the game object.** Configuration lives on the game record, not the room. The current not-started game is the editable entity. [08] must subscribe to the game record and call `updateGameConfig` to edit parameters. Room creation automatically creates an initial game with default config.
+
+2. **[08] must implement the ready check UX.** Only the Captain of a Centaur Team can declare their team ready. [08] must call `declareReady` and `undeclareReady` mutations. The game's `readyTeamIds` array provides the reactive state for the lobby display.
+
+3. **[08] must implement the board preview and lock-in UX.** [08] calls `generateBoardPreview` to generate a preview from the current game config, and `lockBoardPreview`/`unlockBoardPreview` to manage the locked state. The game's `lockedBoardPreview` field provides the reactive state.
+
+4. **[08] must implement SpacetimeDB access token acquisition.** Operators call `issueOperatorAccessToken`, Snek Centaur Servers call `issueBotAccessToken` (using the game credential), and spectators call `issueSpectatorAccessToken`. All tokens have 2-hour expiry. Tokens are used to establish WebSocket connections to the STDB instance.
+
+5. **[08] must respect replay privacy gating.** The `getReplay` query returns `visibleTeamIds` indicating which teams' Centaur action log data the user may see. [08]'s replay viewer must filter [06]'s `getActionLog` queries accordingly.
+
+6. **[08] must implement the `/.well-known/snek-game-invite` endpoint.** The Snek Centaur Server receives `GameInvitationPayload` (Module 03 §4.7) and returns `GameInvitationResponse`. The reference implementation auto-accepts.
+
+7. **[08] must handle tournament UI state.** Games may have `tournamentId` and `tournamentRound` fields. [08] should display tournament progress by querying the `tournaments` table and the tournament's round-games.
+
+8. **[08] must handle healthcheck failure display.** When a game's `healthcheckFailures` field is non-null, [08] should display which teams' servers are failing. The game cannot be started until all healthchecks pass (for non-tournament games).
+
+9. **[07] has no direct dependency on Module 05.** The bot framework operates through [06]'s Centaur subsystem mutations and reads game state from SpacetimeDB. Module 05's game lifecycle orchestration is transparent to the bot framework — the bot only needs a valid SpacetimeDB connection (obtained via `issueBotAccessToken` through [08]).
+
+---
+
 ## REVIEW Items
 
 ### 05-REVIEW-001: Convex retention of admission-ticket validation secret — **RESOLVED (obsolete)**
@@ -270,165 +1320,154 @@ The parameter split is a consequence of board generation moving to Convex (see [
 
 ---
 
-### 05-REVIEW-002: Room deletion and game history preservation
+### 05-REVIEW-002: Room deletion and game history preservation — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-021 asserts that a room's lifetime is independent of its games and persists until explicit deletion, but neither the informal spec nor the draft specifies what happens to historical games, replays, and action logs when a room is deleted. Deleting the room but preserving its games leaves dangling foreign references; cascading the deletion loses historical attribution that [03-REQ-047] requires to remain stable.
-**Question**: What is the policy for room deletion?
-**Options**:
-- A: Rooms cannot be deleted; they can only be archived/hidden from listings while preserving all historical games.
-- B: Rooms can be deleted and the deletion cascades to games and replays (losing history).
-- C: Rooms can be deleted only if they contain no finished games; otherwise they must be archived.
-- D: Room deletion nulls the game records' room reference but preserves the games themselves as orphaned history.
-**Informal spec reference**: §9.1 (Rooms) — silent on deletion.
+**Context**: 05-REQ-021 asserts that a room's lifetime is independent of its games and persists until explicit deletion, but neither the informal spec nor the draft specifies what happens to historical games, replays, and action logs when a room is deleted.
+**Decision**: Option A — Rooms cannot be deleted; they can only be archived/hidden from listings while preserving all historical games, replays, and action logs.
+**Rationale**: Deletion of a room would cascade to or orphan historical game records, violating [03-REQ-047]'s requirement for stable historical attribution. Archiving achieves the user's intent (hide unused rooms) without data loss. Archived rooms can be unarchived if needed.
+**Affected requirements/design elements**: 05-REQ-021 amended to state rooms persist indefinitely with archive-only semantics. 05-REQ-021a added for the archive mechanism.
 
 ---
 
-### 05-REVIEW-003: Roster freeze across tournament rounds
+### 05-REVIEW-003: Roster freeze across tournament rounds — **RESOLVED**
 
 **Type**: Gap (inherited)
 **Phase**: Requirements
-**Context**: [03-REVIEW-006] explicitly flagged this sub-question against Module 05 as the owner of tournament mode lifecycle. The question is whether a tournament's overall lifetime should freeze rosters across all its rounds (including during the inter-round interlude when no individual round is `playing`) or whether rosters unfreeze between rounds. 05-REQ-064 currently inherits the per-round freeze from [03-REQ-046] and leaves the cross-round case unresolved.
-**Question**: Should roster mutations be permitted during the inter-round interlude of a tournament?
-**Options**:
-- A: No freeze between rounds; rosters unfrozen exactly when no round is `playing`. (Current draft of 05-REQ-064.)
-- B: Tournament-wide freeze from first-round-start to final-round-end; inter-round interludes remain frozen.
-- C: Freeze is configurable per tournament.
-**Informal spec reference**: §9.4 step 4; [03-REVIEW-006] sub-question.
+**Decision**: Option B — Tournament-wide freeze from first-round start to final-round end; inter-round interludes remain frozen.
+**Rationale**: Allowing roster mutations during inter-round interludes would create a confusing competitive environment where teams can swap members between rounds of a single tournament. The tournament is a coherent competitive unit; its roster should be stable throughout. This is operationally simpler than per-round freezing, and prevents strategic roster manipulation between rounds.
+**Affected requirements/design elements**: 05-REQ-064 amended to state tournament-wide roster freeze. Design §2.15 implements the freeze check against the `tournaments` table status.
 
 ---
 
-### 05-REVIEW-004: Captain authorization scope bounding of API keys
+### 05-REVIEW-004: Captain authorization scope bounding of API keys — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
-**Context**: 05-REQ-047 (tracing [03-REQ-035]) says an API key's authorization scope is bounded by the creator's current UI authorization scope, and shrinks live with the creator's current scope. This creates a live-dependency between API key enforcement and team-membership state: a Captain who creates an API key and then is demoted would have their API key immediately lose Captain-level privileges. This is arguably correct but has surprising behaviour: organisations often want API keys to represent a stable capability independent of the human who created them. It also complicates the enforcement story because Convex must re-resolve the creator's scope on every request.
-**Question**: Which enforcement model applies to API keys?
-**Options**:
-- A: Live — re-resolve the creator's current scope on every request (current draft of 05-REQ-047).
-- B: Frozen-at-creation — capture a snapshot of the creator's scope at API key creation time and bind the key to that snapshot.
-- C: Role-based — API keys are scoped to a role rather than to the creator's identity, and remain valid as long as the role exists.
-**Informal spec reference**: §3 ("API keys are generated by authenticated users"); §12 ("Authentication").
+**Decision**: Admin-only simplification. API keys are an admin-only affordance with global access. Only admin users can create API keys; the per-user scope-bounding mechanism is eliminated.
+**Rationale**: The original design required live scope resolution on every request — re-resolving the creator's current permissions, which is complex and has surprising behaviour (scope shrinks if the creator is demoted). Since the HTTP API is intended for programmatic platform management rather than per-user automation, restricting API keys to admin users eliminates this complexity. Admin scope is inherently global, so no scope resolution is needed. This matches the most common deployment pattern where API keys are created by platform operators, not individual team members.
+**Affected requirements/design elements**: 05-REQ-045 amended (admin-only authorization). 05-REQ-046 amended (creator must be admin). 05-REQ-047 amended (global admin scope replaces live scope resolution). 05-REQ-051 amended (admin-only creation). 03-REQ-033 and 03-REQ-035 in Module 03 amended to reflect admin-only creation and global scope.
 
 ---
 
-### 05-REVIEW-005: Who sees game_start — timing vs who knows the config
+### 05-REVIEW-005: Who sees game_start — timing vs who knows the config — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
-**Context**: 05-REQ-054 says a `game_start` webhook fires when a game transitions to `playing`, which is after provisioning and initialization have completed. But the webhook payload includes the full game configuration snapshot, which is determined at game-record creation ([05-REQ-024]) — an earlier moment. Subscribers who want to act *before* the game starts (e.g., to pre-stage a spectator client) cannot: `game_start` fires after the fact. The informal spec §12 does not distinguish these moments.
-**Question**: Should there be a `game_created` or `game_will_start` webhook event in addition to `game_start`?
-**Options**:
-- A: Keep only `game_start` firing at the `not-started → playing` transition. (Current draft.)
-- B: Add `game_created` firing at game record creation, before provisioning; keep `game_start` firing at the transition.
-- C: Move `game_start` earlier to fire at game record creation.
-**Informal spec reference**: §9.4 (Game Lifecycle); §12 (Webhooks).
+**Decision**: Option A — Keep only `game_start` firing at the `not-started → playing` transition. No `game_created` or `game_will_start` event.
+**Rationale**: Adding a `game_created` event would fire when the not-started game is created (which happens automatically on room creation and after every game end). This would be noisy and of limited value — the config is still editable at that point. The `game_start` event fires when config is frozen and the game is actually playable, which is the moment subscribers care about. Subscribers who want to pre-stage spectator clients can subscribe to the Convex reactive query on the game record and watch for `status === "playing"`.
+**Affected requirements/design elements**: None — 05-REQ-054 stands as drafted.
 
 ---
 
-### 05-REVIEW-006: Final scores shape and domain meaning
+### 05-REVIEW-006: Final scores shape and domain meaning — **RESOLVED (moot)**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-038 and 05-REQ-055 refer to "final scores" as the terminal state of a game, and the informal spec §11 shapes it as `{centaurTeamId: number}`. But [01] does not yet define what a "score" is in the game rules — [01]'s win condition language is "last team standing" or "max turns reached", neither of which obviously produces a numeric score per team. The shape is carried over from the informal spec without a corresponding requirement in Module 01.
-**Question**: Is a numeric per-team score a domain concept owned by [01], or a derived value computed at game end? If derived, by which runtime (SpacetimeDB or Convex) and by what formula?
-**Options**:
-- A: Score is a domain concept that [01] should define (e.g., sum of surviving snake lengths, or win-status indicator). Flag as upstream gap for Module 01.
-- B: Score is a Convex-computed value derived from the terminal state (snake counts, turn count, tiebreakers), owned entirely by Module 05's Design.
-- C: Score is opaque — just an unknown map whose only requirement is "present at game end". The meaning is out of scope.
-**Informal spec reference**: §11 (`games.scores`); §12 (`GET /api/games/:id`); §5 (turn resolution, §5 phase 10 win condition).
+**Decision**: Already defined upstream. Scoring is defined by Module 01 §1.9 (01-REQ-053: score = sum of body lengths of alive snakes). The `GameEndNotification` payload from Module 04 (§3.3) delivers `GameOutcome` with `scores: Record<string, number>`. Convex consumes these scores directly from the notification — no separate computation needed.
+**Rationale**: Module 01 Phase 2 is now complete and defines scores explicitly. Module 04's exported `GameEndNotification` delivers the scores in a JSON-serializable format. Convex stores the outcome directly from the notification payload.
+**Affected requirements/design elements**: None — 05-REQ-038 consumes scores from the notification payload as originally intended.
 
 ---
 
-### 05-REVIEW-007: "Ready check" semantics and where readiness lives
+### 05-REVIEW-007: "Ready check" semantics and where readiness lives — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-031 mentions "marked themselves ready" but does not specify where team readiness is stored, how it is cleared, or which actor within a team can mark ready. Informal spec §9.4 step 3 says "Each Centaur Team's Captain (or any operator) marks their team ready." This is a platform-side state that lives somewhere, and since it governs the game-start gate, it is squarely in Module 05's territory — but the requirement is currently vague.
-**Question**: Where does Centaur Team readiness live (room record? team record? ephemeral in-memory? transient game record?) and what clears it?
-**Options**:
-- A: Readiness is a per-(room, team) flag on the room record, cleared automatically whenever the room's configuration changes and whenever a new game is auto-created.
-- B: Readiness is a field on the game record from game creation onward, and the not-started game is created eagerly to hold it.
-- C: Readiness is transient and not persistently stored; it is held for the duration of the pre-game lobby session only.
-**Informal spec reference**: §9.4 step 3.
+**Decision**: Option B — Readiness is a field on the game record from game creation onward; the not-started game is created eagerly to hold it. Only the Captain of a Centaur Team is allowed to declare their team ready — no other team member can mark ready. Ready state is cleared whenever a new game is auto-created.
+**Rationale**: Storing readiness on the game record (via `readyTeamIds` array) is natural because readiness is inherently per-game — a team ready for game N is not automatically ready for game N+1. The Captain-only restriction aligns with the Captain's role as the team's authorized representative for game-start decisions. Clearing ready flags on auto-create prevents stale readiness from a previous game from triggering an unintended start.
+**Affected requirements/design elements**: 05-REQ-031 amended to specify readiness on game record, Captain-only, and clearing on auto-create.
 
 ---
 
-### 05-REVIEW-008: Non-tournament auto-create — who owns the room's "current game" invariant
+### 05-REVIEW-008: Non-tournament auto-create — who owns the room's "current game" invariant — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
-**Context**: 05-REQ-016 and 05-REQ-039 together imply that a room always has at most one `not-started` or `playing` game at a time (its `currentGameId`), and that the next game is auto-created immediately on the previous one finishing. If the auto-create fires while administrative actors are mid-edit of the room's parameters, the new game might inherit stale parameters or race against the edit. The informal spec is silent on the atomicity of auto-create vs room parameter edits.
-**Question**: How does auto-create interact with concurrent room parameter edits?
-**Options**:
-- A: Auto-create reads the room's current parameters atomically; any edit in flight is serialized against it.
-- B: Auto-create is deferred until the room has been "idle" (no edits, no active session) for a bounded interval.
-- C: Auto-create is triggered manually by an administrative actor rather than automatically.
-**Informal spec reference**: §9.4 step 7.
+**Decision**: Clarified architecture. The room holds no config state — it is a dumb container for a succession of games with exactly one game being live and editable at a time. All config values live on the game object. When a game finishes, Convex atomically copies its config section into a fresh game object that becomes the new singular live editable not-started game for the room. Tournament-scheduled games follow the same mechanic (game object holds config, room points to it); the only difference is tournament games are auto-started on the tournament schedule without waiting for captain ready declarations. Convex's built-in mutation atomicity prevents race conditions.
+**Rationale**: Placing config on the game object rather than the room eliminates the race condition between auto-create and concurrent room parameter edits — there is no room-level config to race against. The room's `currentGameId` pointer provides a single source of truth for which game is currently active. Auto-create atomically creates the new game and updates `currentGameId` in one mutation.
+**Affected requirements/design elements**: 05-REQ-016 amended (rooms have no config state). 05-REQ-019 amended (room creation also creates initial game). 05-REQ-022 amended (config on game only). 05-REQ-024 amended (config editable while not-started, frozen at start). 05-REQ-032b amended (board preview on game record). 05-REQ-039 amended (auto-create copies from finished game).
 
 ---
 
-### 05-REVIEW-009: Healthcheck failure during game-start orchestration
+### 05-REVIEW-009: Healthcheck failure during game-start orchestration — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-036 asserts that if a participating Centaur Team's Snek Centaur Server is unhealthy at game-start time, Convex does not transition the game to `playing`, but leaves the specific recovery action to Design. This is an under-specified requirement because it affords multiple mutually incompatible interpretations (retry indefinitely, abort the game, surface to operator, substitute a stub). Requirements-level clarity on the intended behaviour would improve testability.
-**Question**: What is the intended recovery action?
-**Options**:
-- A: Abort the game-start attempt and surface the error to the initiating actor; no retry.
-- B: Retry with bounded backoff, then abort on exhaustion.
-- C: Surface to the operator and wait indefinitely until either the server becomes healthy or the operator aborts.
-**Informal spec reference**: §2 ("Snek Centaur Servers"); §9.4.
+**Decision**: Differentiated by game type. For manually-started games: if a participating CentaurTeam fails healthcheck during game-start, the game returns to `not-started` status with a healthcheck failure message and visual indicator of which CentaurTeams' servers are failing. The game cannot be manually started until all teams pass healthcheck. For tournament games that are forcefully started on schedule: failing healthcheck is ignored. If the CentaurTeam can get their server running in time to participate, they may; otherwise they lose by default.
+**Rationale**: Manual games should not start if a participating server is down — the room admin needs to resolve the issue first, and starting a game with a dead server wastes a SpacetimeDB instance. Tournament games, however, must start on schedule regardless of server health — the tournament timeline cannot be delayed by one team's server issues. This mirrors competitive esports where a team that fails to connect by match time forfeits.
+**Affected requirements/design elements**: 05-REQ-036 amended with differentiated healthcheck behaviour.
 
 ---
 
-### 05-REVIEW-010: Transitive dependency on Module 01 exported interfaces
+### 05-REVIEW-010: Transitive dependency on Module 01 exported interfaces — **RESOLVED (moot)**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: Several requirements in this module reference domain concepts owned by [01] — board size enum, "turn", snake count, win conditions, scores — via transitive dependency through [02]. Per Context Management Rule 2, during Phase 1 the agent loads full direct dependencies and Exported Interfaces of transitive dependencies. [01] has only Phase 1 drafted, so no Exported Interfaces exist yet. The current draft references [01] requirement IDs and domain concepts informally. When [01] reaches Phase 2, its exported type vocabulary may not line up exactly with the informal references used here, necessitating a reconciliation pass.
-**Question**: None — this is a meta-flag for the human to revisit after [01] Phase 2 completes.
-**Informal spec reference**: N/A (meta).
+**Decision**: Module 01 Phase 2 is complete; its Exported Interfaces section is available. No action needed beyond recording the resolution.
+**Rationale**: The concern that prompted this review item (that Module 01's exported types might not align with the informal references used in Module 05) has been resolved by Module 01's Phase 2 completion. All domain types referenced by Module 05 (`BoardSize`, `GameConfig`, `GameOutcome`, `BoardGenerationFailure`, `generateBoardAndInitialState`) are now formally exported by Module 01.
+**Affected requirements/design elements**: None.
 
 ---
 
-### 05-REVIEW-011: Centaur Team deletion — whether historical references should soft-delete or be allowed at all
+### 05-REVIEW-011: Centaur Team deletion — whether historical references should soft-delete or be allowed at all — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-015a was added late in drafting after noticing that [06-REQ-041] names [05] as the owner of team-deletion cascade mechanics. The current draft permits deletion (when the team has no `playing` game) and cascades team-scoped live state while preserving historical game records. This has the same shape of concern as 05-REVIEW-002 (room deletion): deleting a team loses the ability to display that team in leaderboards and profile pages, even though the historical attribution pointer in old games still resolves via the snapshot. An alternative is to disallow deletion entirely in favour of an archive flag.
-**Question**: What is the intended lifecycle for Centaur Teams — delete-with-cascade, archive-only, or some hybrid?
-**Options**:
-- A: Permit deletion when no `playing` game; cascade live state; preserve historical snapshots only. (Current draft.)
-- B: Disallow deletion; provide an archive flag that hides the team from listings and new game enrolments but preserves all live and historical state.
-- C: Permit deletion only if the team has never participated in a finished game; otherwise require archive.
-**Informal spec reference**: N/A (gap).
+**Decision**: Option B — Disallow deletion; provide an archive flag that hides the team from listings and new game enrolments but preserves all live and historical state.
+**Rationale**: Deletion of a team, even with cascade to live state and preservation of historical snapshots, creates a degraded experience: the team would no longer appear in leaderboards, profile pages, or team browsers, even though its historical games remain. Archiving achieves the same user intent (hide an inactive team) without losing the team's platform presence. Archived teams can be unarchived if the team becomes active again. This parallels the room archiving decision in 05-REVIEW-002. Note: [06-REQ-041]'s cascade reference to team deletion no longer applies — since teams are never deleted, no cascade is needed.
+**Affected requirements/design elements**: 05-REQ-015a amended to replace deletion-with-cascade with archive-only semantics.
 
 ---
 
-### 05-REVIEW-012: Per-Centaur-Team game credential scope and lifetime
+### 05-REVIEW-012: Per-Centaur-Team game credential scope and lifetime — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-032b introduces per-Centaur-Team game credentials that are pushed to Snek Centaur Servers at game start. The credential's lifetime and revocation mechanics are not yet specified. Questions include: (a) does the credential expire at game end, or does Convex explicitly revoke it? (b) can a credential be refreshed mid-game? (c) what is the credential format (JWT, opaque token, etc.)?
-**Question**: What are the lifetime and revocation semantics for per-Centaur-Team game credentials?
-**Options**:
-- A: Credential is valid for the duration of the game and expires automatically when the game transitions to `finished`. No mid-game refresh. Format is a Design concern.
-- B: Credential has a short TTL and the Snek Centaur Server must periodically refresh it from Convex during the game.
-- C: Credential is valid indefinitely but Convex revokes it at game end.
-**Informal spec reference**: N/A (new concept).
+**Decision**: The per-CentaurTeam game credential JWT has a 2-hour `exp` claim. The credential is strictly scoped to a game instance and becomes useless once that STDB instance is torn down, so there is no need for precise revocation at game-end time. The 2h expiry is well beyond the longest realistic game duration.
+**Rationale**: Module 03's design (§3.15) already specifies the game credential as an Ed25519-signed JWT. The `exp` claim provides a hard upper bound on credential validity. The effective lifetime is further bounded by Convex's enforcement that game credentials are only accepted for games with `status === "playing"` — once the game transitions to `finished`, the credential is functionally useless regardless of its `exp`. The 2h expiry provides a comfortable margin for long games while ensuring leaked credentials cannot be used indefinitely. No mid-game refresh mechanism is needed. Module 03's design (§3.15) has been updated to reflect the 2h expiry value per this resolution.
+**Affected requirements/design elements**: No requirement amendments needed — the expiry value is a Design concern. The 2h value is reflected in the game-start orchestration design (Section 2.3.1 step 6).
 
 ---
 
-### 05-REVIEW-013: Game invitation timeout value
+### 05-REVIEW-013: Game invitation timeout value — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
-**Context**: 05-REQ-032c specifies that servers must respond within a timeout, but does not specify the timeout value. Too short and legitimate servers may fail; too long and game start is delayed.
-**Question**: What is the appropriate timeout for game invitation acceptance?
-**Options**:
-- A: Fixed timeout specified in requirements (e.g., 10 seconds).
-- B: Configurable timeout as a platform-level setting, with a default specified in Design.
-- C: Leave to Design entirely.
-**Informal spec reference**: N/A (new concept).
+**Decision**: Option A — Fixed timeout of 10 seconds.
+**Rationale**: 10 seconds is generous enough for a healthy server to accept an invitation (the accept/reject decision is trivial — just store the credential and return) but short enough to avoid delaying game start for an unresponsive server. The timeout is hardcoded rather than configurable because there is no user-facing need to adjust it — servers are expected to respond promptly to invitations.
+**Affected requirements/design elements**: 05-REQ-032 step 5 amended to specify the 10-second timeout.
+
+---
+
+### 05-REVIEW-014: Timekeeper role elimination and role model simplification — **RESOLVED**
+
+**Type**: Simplification
+**Phase**: Requirements / Design
+**Context**: The informal spec §7.5 designates a "timekeeper" role responsible for operator-mode toggling and turn submission. The original formal spec modeled this as a per-member role in a `roles` array alongside `captain`. During MVP specification, the timekeeper role was identified as unnecessary complexity: (a) no UI affordance for assigning the timekeeper role had been specified, (b) the capabilities assigned to the timekeeper (mode toggling, turn submission) are naturally captain-level actions, and (c) a separate role introduces edge cases around role assignment, freeze semantics, and authorization checking that add no value for the initial platform.
+**Decision**: Eliminate the timekeeper role entirely. Merge all timekeeper capabilities into the Captain. Captain designation is enforced structurally via `centaur_teams.captainId` (a reference to the captain's `users._id`), not via a per-member role field. The `centaur_team_members` table carries no role information — every member is an Operator. The `game_teams.rosterSnapshot` records each member's `isCaptain` boolean for historical attribution.
+**Rationale**: The Captain is already the team's designated authority for game-start readiness, roster management, and server domain nomination. Adding turn-submission and mode-toggling to the Captain's responsibilities is natural and avoids introducing a second privileged role that has no independent lifecycle management. If a future version needs a distinct timekeeper, it can be added as a new field on the team record (analogous to `captainId`) without schema migration of the membership table.
+**Affected requirements/design elements**: 05-REQ-011 amended (roles array removed; captain is structural property of team). 05-REQ-012 amended (timekeeper assignment removed; captain transfer via `captainId` update). 05-REQ-065 amended (simplified role language). Schema: `centaur_team_members.roles` field removed; `game_teams.rosterSnapshot` simplified to `{ userId, email, isCaptain }`. Module 06 amended: `toggleOperatorMode` authorization changed from timekeeper to captain; `turn_submitted` event attributed to captain; 06-REVIEW-008 context updated.
+
+---
+
+### 05-REVIEW-015: Callback token storage elimination and replay data bundling — **RESOLVED**
+
+**Type**: Simplification / Architecture
+**Phase**: Design
+**Context**: The original design stored the game-outcome callback token in the Convex `games` table (`gameEndCallbackToken` field) and compared incoming callback tokens against the stored value. Separately, replay persistence used a Convex-pull pattern: after receiving the game-end notification, Convex scheduled a separate action to retrieve the complete historical record from the STDB instance via HTTP API calls, then tore down the instance in a further scheduled step. This introduced a multi-step asynchronous pipeline (notification → replay pull → teardown) requiring the STDB instance to remain alive throughout.
+
+Two corrections were identified:
+
+1. **Callback token storage is unnecessary.** The callback token is a JWT signed by Convex's own private key. Convex can validate it by verifying the RS256 signature and checking the claims (`iss`, `sub`, `aud`, `exp`) — exactly how any JWT issuer validates its own tokens. Storing the token and comparing against it adds a database field and a read operation for zero security benefit. The JWT's `sub` claim (`stdb-instance:{gameId}`) already binds it to a specific game.
+
+2. **Replay data should be bundled in the game-end notification.** Since the STDB procedure (SpacetimeDB Procedures beta) already has `ctx.http.fetch()` and full read access to all tables, it can read the complete historical record and include it in the notification payload. This eliminates the need for a separate Convex-pull action, allows Convex to tear down the instance immediately upon confirming receipt, and reduces the total number of HTTP round-trips from 2+ (notification + multiple SQL queries + teardown) to 1+1 (notification-with-replay + teardown).
+
+**Decision**: (a) Remove `gameEndCallbackToken` from the Convex `games` table schema. Convex validates incoming callback tokens purely by JWT signature verification and claims checking. (b) The STDB `notify_game_end` procedure bundles the complete `ReplayData` into the `GameEndNotification` payload. Convex processes the replay data inline within the game-end HTTP action and tears down the STDB instance immediately after successful storage. No separate scheduled replay-pull or teardown steps.
+
+**Rationale**: Both changes follow the principle that JWTs are self-contained proofs of authority and should not require server-side storage for validation. Bundling replay data exploits the fact that the procedure already runs post-commit with full table access, and the expected payload size (≤ 300 turns × ≤ 6 teams) is well within HTTP request size limits. The simplified pipeline (single notification → inline processing → immediate teardown) is easier to reason about and reduces STDB instance lifetime.
+
+**Affected requirements/design elements**: 05-REQ-032 step 4 amended (token not stored in Convex). 05-REQ-032a amended (no stored-token comparison). 05-REQ-037 amended (teardown integrated into game-end HTTP action). 05-REQ-038 amended (replay data bundled in notification; teardown integrated). Schema: `gameEndCallbackToken` field removed from `games` table. Section 2.3.2 game-end HTTP action rewritten (no stored-token check; inline replay processing and teardown). Section 2.13 replay persistence rewritten (inline processing of bundled data, not Convex-pull). Module 04 amended: `GameEndNotification` interface gains `replayData` field; §2.10 procedure updated to read and bundle replay tables; §2.11 rewritten from "Replay Export Mechanism" to "Replay Data Bundling"; 04-REVIEW-019 updated.
+
+---
