@@ -70,11 +70,11 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-024**: The runtime shall expose a **move-staging operation** that accepts, from a registered connection, a snake identifier and a direction ([01-REQ-001]). The runtime shall accept the operation only if the calling connection is registered as a human participant or bot participant for the CentaurTeam that owns the named snake; all other callers shall be rejected. (Satisfies [03-REQ-028] within the runtime.)
 
-**04-REQ-025**: At any instant during a turn, the runtime shall retain at most one staged move per snake. A new staged move for a snake whose previous staged move has not yet been consumed by turn resolution shall overwrite the previous staged move. Overwrite is the sole mechanism for changing a staged move; there is no separate cancel-move operation. (Satisfies [02-REQ-011].)
+**04-REQ-025**: The runtime shall record staged moves in an **append-only log**. A new staged move for a snake is appended as a new entry rather than overwriting any previous entry. The effective staged move for a snake at any point in time is the latest entry for that snake by timestamp. There is no separate cancel-move operation; a new staged move for the same snake supersedes the previous one by being the most recent entry. Staged-move entries are part of the historical record and are retained for the full game lifetime, not cleared at turn resolution. (Satisfies [02-REQ-011]. Amended per 06-REVIEW-004 resolution — staged moves are now an append-only log to guarantee that log entries always track with authoritative success.)
 
-**04-REQ-026**: Each accepted staged move shall be recorded together with the `Agent` value (per 04-REQ-020) of the connection that wrote it (`stagedBy: Agent`) and the wall-clock time at which the move was accepted. When an overwrite occurs, these fields shall reflect the most recent writer's `Agent` and time, discarding the previous writer's attribution and time.
+**04-REQ-026**: Each accepted staged move shall be recorded together with the `Agent` value (per 04-REQ-020) of the connection that wrote it (`stagedBy: Agent`), the wall-clock time at which the move was accepted, and the turn number in which it was staged. Because staged moves are append-only, each entry retains its writer's attribution permanently — there is no overwrite or discard of previous entries' attribution. (Amended per 06-REVIEW-004 resolution.)
 
-**04-REQ-027**: The staged-move storage shall be **transient**: it shall not form part of the historical record of Section 4.2. Staged moves are consumed and cleared by turn resolution (Section 4.7); after clearing, no record of the previously staged direction shall remain in the runtime except as captured by the movement event emitted for the turn in question (Section 4.8).
+**04-REQ-027**: The staged-move storage shall be **append-only and historical**: it forms part of the permanent game record. Staged-move entries are not cleared by turn resolution; they persist for the full game lifetime as a historical log of all staging actions. This enables downstream systems ([06], [08]) to reconstruct which moves were staged by whom at any point during the game, supporting sub-turn replay fidelity. (Amended per 06-REVIEW-004 resolution — staged moves are now part of the historical record.)
 
 **04-REQ-028**: The runtime shall not validate move legality (e.g., reject moves that lead into walls) at the moment of staging. Legality is determined only during turn resolution, where a fatal direction kills the snake in Phase 3 per [01-REQ-044]. This preserves the "explore a direction to see its score" affordance described in [08]'s live-operator interface.
 
@@ -104,7 +104,7 @@ This module specifies the per-game runtime that authoritatively executes [01]'s 
 
 **04-REQ-037**: Turn resolution shall execute as a **single atomic transaction**, such that either every state mutation produced by the eleven-phase pipeline is observable to subscribed clients simultaneously, or none of them are. No intermediate state from within the resolution pipeline shall be observable to any subscribed client. (Restates [02-REQ-008] at this module's level of specificity.)
 
-**04-REQ-038**: Within the atomic transaction of turn resolution, the runtime shall, in order: (a) read the current set of staged moves (each carrying its `stagedBy: Agent` per 04-REQ-026); (b) run the eleven-phase pipeline of [01-REQ-041]; (c) for each snake that moved, emit a movement event recording the direction moved, whether growth occurred, and the `Agent` value of the connection that staged the move that was consumed (or `null` if the move was determined by the fallback rule of [01-REQ-042] because no move was staged); (d) emit all other turn events required by [01-REQ-052] (Section 4.8); (e) append the new turn-`T+1` snake-state snapshots, updated item-lifetime records, and post-turn time-budget entries to the historical record; (f) clear all staged moves; (g) add the budget increment to each CentaurTeam's budget per [01-REQ-036].
+**04-REQ-038**: Within the atomic transaction of turn resolution, the runtime shall, in order: (a) read the effective staged moves for the current turn (the latest entry per snake by timestamp from the append-only staged-moves log, each carrying its `stagedBy: Agent` per 04-REQ-026); (b) run the eleven-phase pipeline of [01-REQ-041]; (c) for each snake that moved, emit a movement event recording the direction moved, whether growth occurred, and the `Agent` value of the connection that staged the move that was consumed (or `null` if the move was determined by the fallback rule of [01-REQ-042] because no move was staged); (d) emit all other turn events required by [01-REQ-052] (Section 4.8); (e) append the new turn-`T+1` snake-state snapshots, updated item-lifetime records, and post-turn time-budget entries to the historical record; (f) *(removed — staged moves are append-only and not cleared per 04-REQ-027)*; (g) add the budget increment to each CentaurTeam's budget per [01-REQ-036].
 
 **04-REQ-039**: The `stagedBy` value captured in movement events shall be the `Agent` resolved from the staging connection's Identity at registration time per 04-REQ-020 and carried through from the staged-move record per 04-REQ-026. No further interpretation, mapping, or substitution of the `Agent` value is performed during turn resolution or replay export. (Satisfies [03-REQ-032]. Resolves 04-REVIEW-011.)
 
@@ -399,20 +399,25 @@ interface GameRuntimeRow {
 
 **Rationale**: Separating mutable runtime state from immutable `game_config` prevents lifecycle flags from contaminating a static table. The `game_config` table's immutability enables efficient caching by SpacetimeDB's subscription system.
 
-#### 2.1.5 Mutable Per-Turn Working Tables
+#### 2.1.5 Append-Only Staged-Move Log
 
-**`staged_moves`** — At most one row per snake [04-REQ-025, 04-REQ-026, 04-REQ-027].
+**`staged_moves`** — Append-only log of all move-staging actions [04-REQ-025, 04-REQ-026, 04-REQ-027]. Multiple rows per snake per turn are permitted; the effective staged move for a snake is the latest entry by timestamp.
 
 ```typescript
 interface StagedMoveRow {
-  readonly snakeId: number                // SnakeId — primary key (upsert on conflict)
+  readonly snakeId: number                // SnakeId
   readonly direction: number              // Direction enum value
   readonly agentId: string                // Convex record ID (CentaurTeam or Operator) of the staging connection
-  readonly stagedAtMs: number             // wall-clock timestamp
+  readonly turn: number                   // TurnNumber — the turn in which this move was staged
+  readonly stagedAtMs: number             // wall-clock timestamp — monotonic within the instance
 }
 ```
 
-The `agentId` field carries the Convex record ID from the connection's `centaur_team_permissions` entry. On overwrite, all fields reflect the most recent writer [04-REQ-026]. Cleared after turn resolution [04-REQ-027].
+The `agentId` field carries the Convex record ID from the connection's `centaur_team_permissions` entry. Each staging action appends a new row; no rows are ever overwritten or deleted. The effective staged move for a snake at turn resolution time is determined by selecting the latest entry per snake by `stagedAtMs` for the current turn (see §2.7, Step 1). Historical entries across all turns are retained for the full game lifetime, enabling downstream systems ([06], [08]) to reconstruct the complete staged-move history for sub-turn replay. (Amended per 06-REVIEW-004 resolution.)
+
+**Index**: Primary query pattern is `WHERE turn = T` for turn resolution, and full-table scan for replay export.
+
+#### 2.1.6 Mutable Per-Turn Working Tables
 
 **`centaur_team_turn_state`** — One row per CentaurTeam, tracks per-turn declaration and clock state.
 
@@ -551,12 +556,13 @@ reducer stage_move(snakeId: number, direction: number):
   4. If role === 'spectator', reject [04-REQ-024, 03-REQ-026].
   5. Look up snakeId in the latest snake_states for currentTurn. Determine the snake's centaurTeamId.
   6. If the connection's centaurTeamId !== snake's centaurTeamId, reject [04-REQ-029].
-  7. Upsert into staged_moves: set direction, agentId = connection's agentId from
-     centaur_team_permissions, stagedAtMs = now [04-REQ-025, 04-REQ-026].
+  7. Append into staged_moves: insert new row with snakeId, direction,
+     agentId = connection's agentId from centaur_team_permissions,
+     turn = game_runtime.currentTurn, stagedAtMs = now [04-REQ-025, 04-REQ-026].
   8. No legality validation of the direction [04-REQ-028].
 ```
 
-The upsert (insert-or-replace on snakeId) implements the last-write-wins semantics of 04-REQ-025.
+The append (insert new row) implements the append-only semantics of 04-REQ-025. The effective staged move for a snake is the latest entry by timestamp; last-write-wins is determined at read time during turn resolution (§2.7, Step 1).
 
 ---
 
@@ -655,13 +661,16 @@ reducer resolve_turn():
   T = game_runtime.currentTurn
   resolutionStartTimeMs = now
 
-  // — Step 1: Read staged moves [04-REQ-038a] —
+  // — Step 1: Read effective staged moves [04-REQ-038a] —
+  // For each snake, the effective staged move is the latest entry by stagedAtMs
+  // for the current turn T in the append-only staged_moves log [04-REQ-025].
   stagedMoves: Map<SnakeId, StagedMove> = new Map()
-  for each row in staged_moves:
-    stagedMoves.set(row.snakeId, {
-      direction: row.direction as Direction,
-      stagedBy: row.agentId                          // Convex record ID (CentaurTeam or Operator)
-    })
+  for each row in staged_moves WHERE turn = T, ordered by stagedAtMs DESC:
+    if not stagedMoves.has(row.snakeId):             // take only the latest per snake
+      stagedMoves.set(row.snakeId, {
+        direction: row.direction as Direction,
+        stagedBy: row.agentId                        // Convex record ID (CentaurTeam or Operator)
+      })
 
   // — Step 2: Assemble GameState from tables —
   board = readBoardState()                                // from board_state
@@ -696,8 +705,9 @@ reducer resolve_turn():
     insert time_budget_states row for turn T
   insert turns row for turn T (turnStartTimeMs, resolutionStartTimeMs)
 
-  // — Step 7: Clear staged moves [04-REQ-038f] —
-  delete all rows from staged_moves
+  // — Step 7: (Removed — staged moves are append-only and not cleared) —
+  // Staged-move rows persist as historical record [04-REQ-027].
+  // No deletion occurs; the table retains all staging actions across all turns.
 
   // — Step 8: Advance turn [04-REQ-042] —
   T_next = T + 1
@@ -728,7 +738,7 @@ reducer resolve_turn():
 
 **Atomicity**: All reads (steps 1–2), the shared engine call (step 4), and all writes (steps 5–10) execute within a single SpacetimeDB reducer invocation, which is a single ACID transaction. No intermediate state is observable to any subscribed client [04-REQ-037, 04-REQ-067].
 
-**`stagedBy` capture** [04-REQ-038c, 04-REQ-039]: The `agentId` stored in `staged_moves` (written at staging time per Section 2.4) is read in step 1 and passed to `resolveTurn()` as `StagedMove.stagedBy`. For snakes where no move was staged, `resolveTurn()` returns `stagedBy: null` in the movement event per 04-REQ-040.
+**`stagedBy` capture** [04-REQ-038c, 04-REQ-039]: The `agentId` stored in the latest `staged_moves` entry per snake (written at staging time per Section 2.4) is read in step 1 and passed to `resolveTurn()` as `StagedMove.stagedBy`. For snakes where no move was staged for the current turn (no entries with `turn = T`), `resolveTurn()` returns `stagedBy: null` in the movement event per 04-REQ-040.
 
 **GameState assembly**: Module 01's `GameState` aggregate shape is not exported ([01] DOWNSTREAM IMPACT note 8). The internal aggregate for this module assembles `Board`, `SnakeState[]`, `ItemState[]`, and `CentaurTeamClockState[]` from the table rows. `Board` is constructed from `board_state`; `SnakeState[]` from the latest `snake_states` rows (turn T); `ItemState[]` from active `item_lifetimes` rows (spawnTurn ≤ T AND destroyedTurn IS NULL or > T); `CentaurTeamClockState[]` from `centaur_team_turn_state` combined with `time_budget_states`.
 
@@ -830,7 +840,7 @@ Filtering semantics:
 - A `staged_moves` row is visible only if the snake belongs to the caller's CentaurTeam.
 - Spectator connections (no `centaur_team_permissions` row for `ctx.sender`) see no `staged_moves` rows — the inner subquery yields no match.
 
-Staged moves are the most sensitive data in the STDB instance — they reveal what competitors are planning before the turn resolves. No connection may read another CentaurTeam's staged moves.
+Staged moves are the most sensitive data in the STDB instance — they reveal what competitors are planning before the turn resolves. No connection may read another CentaurTeam's staged moves. Because the `staged_moves` table is now append-only and contains multi-turn history, visibility filtering applies across all historical entries — a connection can see its own team's complete staging history but never another team's, regardless of turn.
 
 Clients subscribe to `staged_moves_view` instead of the raw `staged_moves` table.
 
@@ -867,7 +877,11 @@ When a snake's visibility changes at a turn boundary (effect applied, cancelled,
 
 #### 2.9.5 Replay-Export Exemption
 
+<<<<<<< HEAD
 The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all visibility filtering [04-REQ-064]. The module owner, authenticated via management JWT, has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (such as unfiltered `snake_states` and `staged_moves`). This is a built-in SpacetimeDB capability requiring no additional design. The complete unfiltered historical record is returned for downstream replay systems that render per-CentaurTeam perspectives.
+=======
+The replay-export client (Convex, authenticated per [03-REQ-048]) bypasses all RLS [04-REQ-064]. The complete unfiltered historical record is returned — including invisible snakes' `snake_states` rows, the complete append-only `staged_moves` history, and `centaur_team_permissions` — for downstream replay systems that render per-CentaurTeam perspectives.
+>>>>>>> 793aee5 (Module 06 Phase 2 — Centaur State Design + Exported Interfaces)
 
 ---
 
@@ -919,10 +933,15 @@ After game-end detection and notification, Convex retrieves the complete histori
 5. `turns` — all turn timing records.
 6. `snake_states` — all per-turn per-snake state snapshots.
 7. `item_lifetimes` — all item lifetime records (complete with spawn and destroy turns).
-8. `time_budget_states` — all per-turn per-CentaurTeam budget records.
-9. `turn_events` — all turn events across all turns.
+8. `staged_moves` — complete append-only staged-move history across all turns, including per-entry agent attribution and timestamps [04-REQ-025, 04-REQ-027]. This is a primary replay table (not residual); its entries enable downstream systems ([06], [08]) to reconstruct which moves were staged by whom at any sub-turn timestamp.
+9. `time_budget_states` — all per-turn per-CentaurTeam budget records.
+10. `turn_events` — all turn events across all turns.
 
+<<<<<<< HEAD
 **Visibility filtering bypass** [04-REQ-064]: The replay-export queries bypass all visibility filtering. The management JWT identifies the caller as the module owner (Convex platform runtime), which has unrestricted access to all tables — including private tables (such as `centaur_team_permissions`) and the raw underlying tables behind views (bypassing `snake_states_view` and `staged_moves_view`). The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and any residual `staged_moves` — is returned.
+=======
+**RLS bypass** [04-REQ-064]: The replay-export queries bypass all RLS. The management JWT identifies the caller as the privileged Convex platform runtime, which is exempt from RLS. The complete unfiltered record — including all invisible snakes' `snake_states` rows, `centaur_team_permissions`, and the complete append-only `staged_moves` history — is returned.
+>>>>>>> 793aee5 (Module 06 Phase 2 — Centaur State Design + Exported Interfaces)
 
 **Data completeness**: The exported record is sufficient to reconstruct a complete replay of the game [04-REQ-012]. Because `stagedBy` fields already carry `agentId` values (resolved at connection time per 04-REQ-020), no Identity→agent resolution step is required during export [04-REQ-061].
 
