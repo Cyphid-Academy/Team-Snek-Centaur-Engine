@@ -6,7 +6,7 @@
 
 **07-REQ-001**: The bot framework shall be a library consumed by the Snek Centaur Server runtime ([02-REQ-004]). It shall execute within the Snek Centaur Server process and share that process's access to its hosted Centaur Teams' Centaur state ([06]) and to each team's game's SpacetimeDB instance ([02-REQ-023]).
 
-**07-REQ-002**: The bot framework shall operate at single-ply (depth-1) lookahead for the MVP: for each candidate self-move, it simulates exactly the next turn's resolution and scores the resulting board. Multi-ply tree search is out of scope for this module. (Flagged: see 07-REVIEW-001.)
+**07-REQ-002**: The bot framework shall operate at single-ply (depth-1) lookahead for the MVP: for each candidate self-move, it simulates exactly the next turn's resolution and scores the resulting board. Multi-ply tree search is out of scope for this module.
 
 **07-REQ-003**: The bot framework shall produce, for every snake owned by its team in the current game, a **stateMap** — a function from candidate direction to a worst-case weighted score — updated continuously during the turn in response to changes in its reactive inputs (07-REQ-020).
 
@@ -69,14 +69,14 @@
 
 **07-REQ-020**: For each owned snake, the framework shall treat exactly three reactive inputs as determining the active content of that snake's game tree cache and stateMap:
 - **Interest map**: the union, over the snake's active Drives, of each Drive's foreign-move nominations (07-REQ-007). For each foreign snake Y this yields the set of Y-directions at least one of the self snake's Drives cares about. If Y has no nominations from any active Drive, Y is absent from the snake's lattice entirely, regardless of Y's commitment state.
-- **Commitment state**: for each foreign snake Y, either a specific committed direction (manual mode), or null (automatic mode — all Y's nominated directions are in play).
+- **Commitment state**: for each foreign snake Y, either a specific committed direction or null, determined per 07-REQ-034's snake-category rules. When null, all of Y's nominated directions are in play.
 - **Portfolio weights**: the scalar weights applied to normalised cached outputs during scoring (§7.8).
 
 **07-REQ-021**: A cached branch in which foreign snake Y moves direction D shall be **active** if and only if D is in the snake's interest map for Y **and** Y's commitment is either null or equal to D. All other cached branches shall be **dormant**. Changes to the interest map or to a foreign snake's commitment shall toggle branches between active and dormant without re-simulation.
 
 **07-REQ-022**: Portfolio weight changes ([06-REQ-015]) shall affect scoring (§7.8) but shall not change which branches are active or dormant, shall not invalidate any cached simulation, and shall not trigger new simulations. They shall trigger a rescan and possible dirty-marking of the stateMap per 07-REQ-036.
 
-**07-REQ-023**: The game tree cache for an owned snake shall be cleared at the start of each fresh turn (on receipt of a new pre-turn board state from SpacetimeDB) and rebuilt from scratch under the rules of this section. Within a turn, the cache shall be append-only: simulations once stored are never evicted, only toggled active/dormant.
+**07-REQ-023**: The game tree cache for an owned snake shall be cleared when the turn number observed in the framework's SpacetimeDB subscription changes, and rebuilt from scratch under the rules of this section. A SpacetimeDB reconnection that resurfaces the current turn number shall not trigger a clear. Within a turn, the cache shall be append-only: simulations once stored are never evicted, only toggled active/dormant.
 
 ---
 
@@ -94,7 +94,7 @@
 - A **point** in the lattice is a tuple that selects one active direction per dimension, and corresponds to exactly one simulated world per candidate self-direction of the owned snake.
 - Foreign snakes that drop out of the interest map (because no Drive nominates any of their moves) contribute no dimension; their positions in the simulated world are held at their current cell. (A restatement of 07-REQ-020's exclusion rule for clarity.)
 
-**07-REQ-028**: For each (foreign snake Y, direction D) pair present in the interest map, the framework shall compute a **priority weight** equal to the sum, over Drives that nominate D for Y, of the product of that Drive's portfolio weight and a rank-decay factor applied to the Drive's rank within the configured Drive ordering ([06-REQ-007]). Priority weights shall be reactively recomputed on any change that would affect them — Drive addition, Drive removal, Drive weight change, portfolio reordering. The concrete rank-decay formula is a design-phase decision subject to 07-REVIEW-004.
+**07-REQ-028**: For each (foreign snake Y, direction D) pair present in the interest map, the framework shall compute a **priority weight** equal to the sum, over Drives that nominate D for Y, of the product of that Drive's portfolio weight and a rank-decay factor applied to the Drive's rank within the configured Drive ordering ([06-REQ-007]). Priority weights shall be reactively recomputed on any change that would affect them — Drive addition, Drive removal, Drive weight change, portfolio reordering. The concrete rank-decay formula is a design-phase decision.
 
 **07-REQ-029**: The framework shall traverse uncomputed but active lattice points in descending combined priority, where a point's combined priority is the product of the per-(foreign snake, direction) priority weights at the point's chosen ranks. Traversal shall be anytime: partial progress is usable immediately and continues until the cache is full for the snake or the compute budget is exhausted ([07]'s compute scheduling in §7.9).
 
@@ -102,15 +102,20 @@
 
 **07-REQ-031** *(negative)*: Already-computed cached worlds shall not be re-simulated in response to priority weight changes. A priority weight change only affects the *order* in which still-uncomputed active points are visited next.
 
-**07-REQ-032**: Foreign snake position when a dimension is not present in the lattice: for any alive foreign snake that does not contribute a dimension (because the owned snake has no Drive nominating any of that foreign snake's moves), the simulated world shall place that foreign snake as if it stayed in place for the turn. This deliberately diverges from physically realistic play but is justified as the cheapest "don't-care" fill for dimensions the heuristics are by definition indifferent to. (Flagged: see 07-REVIEW-003.)
+**07-REQ-032**: Foreign snake position when a dimension is not present in the lattice: for any alive foreign snake that does not contribute a dimension (because the owned snake has no Drive nominating any of that foreign snake's moves), the simulated world shall place that foreign snake as frozen in place for the turn. Frozen snakes are held at their current position but temporally annotated as stale per 07-REQ-065, enabling downstream analysis algorithms to compensate for the frozen-in-place fiction via the temporal head-start mechanism of 07-REQ-066.
 
 ---
 
 ### 7.7 Teammate and Opponent Foreign Snakes
 
-**07-REQ-033**: "Foreign snake", as used in §7.5 and §7.6, means any snake other than the owned snake being scored — including alive teammates. The bot framework shall treat teammate snakes as foreign for the purpose of the lattice and commitment state. (Flagged: see 07-REVIEW-002.)
+**07-REQ-033**: "Foreign snake", as used in §7.5 and §7.6, means any snake other than the owned snake being scored — including alive teammates. The bot framework shall treat teammate snakes as foreign for the purpose of the lattice and commitment state.
 
-**07-REQ-034**: For a teammate snake, commitment state is observable by the framework: it is the teammate's staged move (if any), read from the Snek Centaur Server's own state — where "staged" is in the sense of either an operator-staged move recorded by [06]'s action log or a submission-pipeline staging recorded by 07-REQ-046. For an opposing team's snake, commitment state shall always be null (automatic from the framework's perspective), because no mechanism exists for the framework to observe another team's staging.
+**07-REQ-034**: Commitment state semantics vary by snake category:
+- **Teammate snake in manual mode**: its staged move (if any) is treated as a committed direction for simulation purposes, but **only when that staged direction intersects with the evaluating snake's interest map** (07-REQ-020). If the staged direction does not intersect the interest map, the manual teammate has no active directions in the lattice and contributes no dimension — it is held in place per 07-REQ-032, consistent with the standard lattice-membership rules of 07-REQ-020 and 07-REQ-021. The framework reads teammate staged moves from its SpacetimeDB subscription ([02-REQ-023]), where operator browsers stage moves directly via their game-participant access token ([03]'s operator identity).
+- **Teammate snake in automatic mode**: its staged moves are **ignored entirely** by simulation in the MVP. Its commitment state is null (same as opponents), meaning all its nominated directions are active dimensions in the lattice. The fact that the bot framework may have staged a move for that automatic teammate via the submission pipeline (07-REQ-044) does NOT collapse it to a committed direction for other snakes' simulations.
+- **Opponent snake**: commitment state is always null, because no mechanism exists for the framework to observe another team's staging. All nominated directions for the opponent are active dimensions in the lattice.
+
+*Rationale*: Automatic-mode teammates are treated as uncommitted because their staged move is a bot-internal rolling best-guess that changes frequently and should not be used as a constraint by sibling evaluations. Only explicit human staging (manual mode) represents deliberate intent worth treating as committed.
 
 ---
 
@@ -147,12 +152,14 @@ Within each tier, compute shall be allocated round-robin across snakes.
 
 **07-REQ-043**: Any change to a reactive input that causes a previously dormant active-but-uncomputed lattice point to become active shall enqueue that point for simulation in the snake's current compute tier. Reversion to a prior commitment (for which the relevant branches were already computed) shall not enqueue any work; those branches reactivate without simulation.
 
-**07-REQ-044**: The framework shall run a **scheduled submission pass** on a fixed interval during the turn (informal spec §6.8 specifies 100 ms; the concrete interval is subject to 07-REVIEW-004). On each pass, for each automatic-mode snake whose stateMap dirty flag is set, the framework shall:
+**07-REQ-044**: The framework shall run a **scheduled submission pass** on a fixed interval during the turn (informal spec §6.8 specifies 100 ms; the concrete interval is a design-phase decision). On each pass, for each automatic-mode snake whose stateMap dirty flag is set, the framework shall:
 - Sample a direction from the current stateMap via the softmax decision rule (§7.10).
 - Stage that direction in SpacetimeDB via [02-REQ-011]'s staged-move mechanism.
 - Clear the snake's dirty flag.
 
-**07-REQ-045**: The framework shall execute a **final submission** pass immediately before the turn deadline observed in SpacetimeDB ([01-REQ-038], [01-REQ-039]), flushing all automatic-mode snakes whose dirty flag is still set. The mechanism by which the framework learns the imminent deadline is a design-phase decision but shall be sufficient to guarantee that every dirty automatic-mode snake has a final staged move before [01-REQ-040]'s "all teams declared turn over" condition is evaluated. (Flagged: see 07-REVIEW-005.)
+**07-REQ-045**: The framework shall execute a **final submission** pass when the dynamically computed turn deadline is imminent, flushing all automatic-mode snakes whose dirty flag is still set. The turn deadline shall be calculated dynamically each turn as: `min(automaticTimeAllocationMs, remainingTimeBudget)` where `automaticTimeAllocationMs` is the game-scoped centaur parameter from [06-REQ-040a] (always shorter than the max turn duration from the engine), and `remainingTimeBudget` is the team's current chess clock budget observable from SpacetimeDB. The smaller of the two takes precedence. On turn 0, `turn0AutomaticTimeAllocationMs` (also from [06-REQ-040a]) replaces `automaticTimeAllocationMs`. The threshold at which the deadline is considered "imminent" is a design-phase decision. The scheduled submission pipeline (07-REQ-044) continues to operate normally right up until the turn is declared over.
+
+**07-REQ-045a**: When an operator (timekeeper) manually triggers immediate turn submission (`declareTurnOver`), the framework shall **not** execute a final flush of dirty automatic-mode snake states. The manual submission action reflects human discretion that the current total set of staged moves is acceptable for immediate submission. Flushing dirty states would cause new softmax rolls after the human decision with no opportunity for humans to respond, which contradicts the purpose of manual override. Only automatic deadline expiry triggers the final flush described in 07-REQ-045.
 
 **07-REQ-046**: Manual-mode snakes — whether currently selected or not — shall never be staged by the scheduled or final submission passes. Their staged moves shall originate exclusively from operator action routed through [08]'s live operator interface. This discharges 07's share of the manual/auto staging split in [06-REQ-018].
 
@@ -208,13 +215,21 @@ Within each tier, compute shall be allocated round-robin across snakes.
 
 ---
 
-### 7.14 Action Log Obligations
+### 7.14 Temporal Annotation of Simulated Board State
 
-**07-REQ-062**: Every move the framework stages per 07-REQ-044 and 07-REQ-045 shall result in a move-staging action log entry per [06-REQ-036], with the actor identified as the Snek Centaur Server acting via the per-Centaur-Team game credential per [06-REQ-034] and with the identity-type field set to bot. This is the bot-origin side of the writer-exclusivity rule in [06-REQ-037].
+**07-REQ-065**: Each simulated partial board state produced by the framework shall track a **per-snake turn timestamp**. Snakes whose explicit moves are simulated (present in the lattice as active dimensions) shall be annotated with the current turn number. Frozen snakes (absent from the lattice, held in place per 07-REQ-032) shall be annotated as **one turn behind** the simulated snakes.
+
+**07-REQ-066**: Board analysis algorithms operating on simulated partial board states — including but not limited to multi-headed BFS for Voronoi territory maps — shall use the per-snake turn timestamps (07-REQ-065) to give frozen snakes a temporal head start proportional to their staleness. This enables meaningful positional inference from simulated worlds despite the frozen-in-place fiction for non-lattice snakes.
+
+---
+
+### 7.15 Action Log Obligations
+
+**07-REQ-062**: Every move the framework stages per 07-REQ-044 and 07-REQ-045 is recorded in the SpacetimeDB append-only staged-moves log ([04-REQ-025], [04-REQ-027]) as a side effect of the `stage_move` reducer call. The framework shall not write move-staging entries to the Centaur action log in Convex; move staging events are excluded from the Centaur action log per [06-REQ-036] and resolved 06-REVIEW-004. The staged-move log entry in SpacetimeDB inherently records the actor identity (the bot participant identity via the per-Centaur-Team game credential per [05-REQ-032b]) and is attributable as bot-originated per 07-REQ-047.
 
 **07-REQ-063**: Every computed display state snapshot the framework writes per 07-REQ-039 shall correspond to an action log entry of category "computed display state snapshot" per [06-REQ-036] and [06-REQ-037].
 
-**07-REQ-064** *(negative)*: The framework shall not write action log entries for operator-originated events (selection, manual-mode toggles, operator-initiated Drive edits, etc.). Those entries are written by the originating operator per [06-REQ-037]'s non-reserved categories, subject to 06-REVIEW-003's resolution.
+**07-REQ-064** *(negative)*: The framework shall not write action log entries for operator-originated events (selection, manual-mode toggles, operator-initiated Drive edits, etc.). Those entries are written by the originating operator per [06-REQ-037]'s non-reserved categories (see resolved 06-REVIEW-003).
 
 ---
 
@@ -222,6 +237,7 @@ Within each tier, compute shall be allocated round-robin across snakes.
 
 ### 07-REVIEW-001: Depth-1 scope as requirement vs design note
 
+**Status**: ✅ Resolved — Option A (binding requirement)
 **Type**: Ambiguity
 **Phase**: Requirements
 **Context**: The informal spec (§6 preamble) states "The MVP bot framework operates at depth-1 (single-ply lookahead). Multi-ply tree search is a future enhancement." 07-REQ-002 promotes this to a requirement, on the grounds that multi-ply would pervasively change the cache structure, reactive-input model, and compute scheduling, and a spec reader should be able to rely on "depth-1" as a binding contract. The alternative framing is that depth-1 is a current *design choice* that satisfies a more abstract requirement like "the framework shall produce per-direction worst-case scores that update continuously during the turn", and the depth statement belongs in Phase 2 Design.
@@ -229,12 +245,14 @@ Within each tier, compute shall be allocated round-robin across snakes.
 **Options**:
 - A: Binding requirement (current draft, 07-REQ-002). Forces any multi-ply change to be a spec revision and documents the MVP scope clearly.
 - B: Move to Design phase as a rationale note attached to the cache/traversal design. Requirements stay silent on depth.
+**Resolution**: Option A. 07-REQ-002 stays as-is. Depth-1 is a binding requirement. Any future multi-ply extension would require an explicit spec revision. The "Flagged" tag has been removed from 07-REQ-002.
 **Informal spec reference**: §6 preamble.
 
 ---
 
 ### 07-REVIEW-002: Teammates as foreign snakes
 
+**Status**: ✅ Resolved — allied snakes are foreign, with commitment nuance
 **Type**: Gap
 **Phase**: Requirements
 **Context**: The informal spec's §6.6 talks about "foreign snakes" without specifying whether teammates are included. Physically, teammates are part of the world and affect turn resolution (body collisions, severings, food competition); excluding them from the lattice would make simulations systematically wrong whenever a Drive's outcome depends on teammate behaviour. 07-REQ-033 includes teammates, and 07-REQ-034 distinguishes observable teammate commitments (staged moves within the team) from unobservable opponent commitments (null). This is a plausible reading but is not explicitly stated in the informal spec.
@@ -247,12 +265,14 @@ A subtle consequence of the current draft: a teammate snake that has been staged
 - A: All non-self snakes, teammates included. Teammate commitments are observable as their staged moves. (Current draft.)
 - B: Only opposing-team snakes. Teammates are handled by a separate (to-be-specified) mechanism.
 - C: All non-self snakes, but teammates are always treated as committed to their currently-staged move if any, and never contribute interest-map dimensions beyond that committed direction. (A restricted variant of A.)
+**Resolution**: Allied (teammate) snakes are indeed foreign snakes. 07-REQ-033 confirmed as-is. 07-REQ-034 has been amended to clarify the commitment semantics precisely by snake category: (1) manual-mode teammates have their staged move treated as committed only when the staged direction intersects the evaluating snake's interest map; (2) automatic-mode teammates have their staged moves ignored entirely — commitment state is null, same as opponents; (3) opponents are always null. A rationale note has been added to 07-REQ-034 explaining why automatic-mode teammates are treated as uncommitted: their staged move is a bot-internal rolling best-guess that changes frequently and should not constrain sibling evaluations. The "Flagged" tag has been removed from 07-REQ-033.
 **Informal spec reference**: §6.6 (uses "foreign" without defining membership).
 
 ---
 
 ### 07-REVIEW-003: Foreign snakes absent from the interest map — hold in place
 
+**Status**: ✅ Resolved — frozen in place with temporal annotation
 **Type**: Ambiguity
 **Phase**: Requirements
 **Context**: 07-REQ-020 and 07-REQ-032 together specify that a foreign snake with no interest-map entry contributes no dimension to the lattice and is "held at its current position" in simulation. This is what the informal spec §6.6 implies ("Y drops out of the lattice — it contributes no dimension and is held at its current position"), but "held at its current position" is only physically plausible on turn 0 or for a dying/stuck snake. On any later turn, a live foreign snake will certainly move somewhere; simulating it as stationary is a deliberate fiction. The informal spec accepts this because a Drive that doesn't care about Y's moves by definition doesn't care where Y ends up; scoring of those heuristics that *don't* mention Y is unaffected by Y's fictitious stasis. But heuristics that *do* care about Y and don't nominate any of Y's moves (plausible if a Drive only nominates the specific moves it considers interesting and treats others as "don't care") will implicitly score Y's stationary ghost.
@@ -261,12 +281,20 @@ A subtle consequence of the current draft: a teammate snake that has been staged
 - A: Hold Y stationary (current draft). Simpler; places the "don't care" contract on heuristic authors implicitly.
 - B: Add a requirement that a Drive nominating *any* move for Y must nominate all of Y's non-trivially-lethal moves. Shifts the contract to be explicit.
 - C: When Y is absent from the interest map, simulate Y as taking a "typical" move (e.g., Y's last direction, or a staged move if observable per 07-REVIEW-002). Most realistic but most complex and introduces a new notion of "typical".
-**Informal spec reference**: §6.6 ("held at its current position").
+**Resolution**: The resolution is not any of the three listed options in isolation. The correct reading from the general centaur engine spec v6 (World Simulation section) specifies a temporal annotation mechanism that compensates for the frozen-in-place fiction:
+- Foreign snakes absent from the interest map are held at their current position (as 07-REQ-032 already said) — this part is correct.
+- **07-REQ-065** (new) specifies that simulated partial board states must track a per-snake turn timestamp. Snakes in the lattice are annotated with the current turn; frozen snakes are annotated as one turn behind.
+- **07-REQ-066** (new) specifies that board analysis algorithms (e.g., multi-headed BFS for Voronoi territory maps) must use these timestamps to give frozen snakes a temporal head start proportional to their staleness.
+- 07-REQ-032 has been updated to reference the temporal annotation mechanism, replacing the "deliberately diverges from physically realistic play" apology with the correct framing: "frozen in place but temporally annotated as stale, enabling downstream analysis algorithms to compensate."
+
+*Post-mortem*: The formal spec extracted the "held at current position" rule from the team-snek spec v2.2 §6.6 but missed the temporal annotation mechanism documented in the general centaur engine spec v6 (World Simulation section, lines 309–311): "The partial board state tracks per-object turn timestamps. This allows graph algorithms such as multi-headed BFS for Voronoi territory to give objects that have moved an appropriate temporal head start." The team-snek v2.2 doesn't repeat this because it inherits it from v6 — the gap occurred because formal extraction focused on v2.2 without cross-referencing v6's simulation semantics.
+**Informal spec reference**: §6.6 ("held at its current position"); general centaur engine spec v6 §World Simulation (lines 309–311).
 
 ---
 
 ### 07-REVIEW-004: Concrete numeric constants (RANK_DECAY, submission interval)
 
+**Status**: ✅ Resolved — Option A (leave flexible)
 **Type**: Proposed Addition
 **Phase**: Requirements
 **Context**: The informal spec's §6.6 specifies `RANK_DECAY = 0.9` and §6.8 specifies a 100 ms scheduled submission interval. Both look like design choices rather than user-facing contracts: a different decay constant or interval would not invalidate the framework's contract to operators or downstream modules. The current draft leaves these concrete values to Phase 2 Design (07-REQ-028, 07-REQ-044) and treats the requirement as "there exists a rank-decay mechanism" and "there exists a scheduled submission interval", respectively.
@@ -275,12 +303,14 @@ A subtle consequence of the current draft: a teammate snake that has been staged
 - A: Leave flexible in Phase 1; pin in Phase 2 Design. (Current draft.)
 - B: Pin 0.9 and 100 ms as requirements on the grounds that the informal spec treats them as concrete.
 - C: Expose both as bot parameters in [06-REQ-011], making them operator-tunable rather than hardcoded.
+**Resolution**: Option A. Current draft position stands. Concrete numeric values are left to Phase 2 Design. No requirement text changes needed.
 **Informal spec reference**: §6.6 (`RANK_DECAY = 0.9`); §6.8 ("100ms interval").
 
 ---
 
 ### 07-REVIEW-005: Final submission deadline awareness
 
+**Status**: ✅ Resolved — dynamic deadline with chess clock semantics
 **Type**: Gap
 **Phase**: Requirements
 **Context**: 07-REQ-045 requires the framework to execute a final submission pass immediately before the turn deadline, so that all dirty automatic-mode snakes are staged before the turn resolves. The chess timer ([01-REQ-034] through [01-REQ-040]) lives in SpacetimeDB, and the turn is declared over by explicit team declaration or per-turn clock expiry — neither of which is a clean "imminent deadline" signal the framework can precisely predict. Two complications:
@@ -293,12 +323,19 @@ The informal spec §6.8 just says "immediately before the turn deadline" without
 - A: The team's turn-over declaration is issued by a component that first notifies the framework, waits for the framework's final pass to complete, then declares turn-over to SpacetimeDB. Requires a framework-side "flush" hook invoked from whatever triggers declaration.
 - B: The framework polls the per-turn clock in SpacetimeDB at high frequency and fires the final pass when remaining time crosses a configurable threshold. Requires picking a threshold and accepting that either clock-expiry or explicit declaration can pre-empt the final pass.
 - C: There is no distinct "final pass" — the framework's submission-pipeline cadence is fast enough that the scheduled pass immediately prior to any declaration is "good enough". Weakens 07-REQ-045 to a best-effort guarantee.
-**Informal spec reference**: §6.8 ("final submission").
+**Resolution**: 07-REQ-045 has been substantially amended:
+- The deadline is not a single fixed signal — it is calculated dynamically each turn as `min(automaticTimeAllocationMs, remainingTimeBudget)` where `automaticTimeAllocationMs` is the game-scoped centaur parameter from [06-REQ-040a] and `remainingTimeBudget` is the team's chess clock budget from SpacetimeDB. On turn 0, `turn0AutomaticTimeAllocationMs` replaces `automaticTimeAllocationMs`.
+- The final submission pass fires when the dynamically computed deadline is imminent (threshold is a design-phase decision).
+- **07-REQ-045a** (new) specifies that manual operator turn submission (`declareTurnOver`) shall NOT trigger a final flush of dirty automatic-mode snake states. The manual submission reflects human discretion that the current staged moves are acceptable. Flushing dirty states would cause new softmax rolls after the human decision with no opportunity for humans to respond, contradicting the purpose of manual override.
+- The scheduled submission pipeline (07-REQ-044) continues to operate normally until the turn is declared over — only the final flush differs between automatic deadline expiry (flush happens) and manual submission (flush suppressed).
+- The "Flagged" tag has been removed from 07-REQ-045.
+**Informal spec reference**: §6.8 ("final submission"); §5.3 (operator mode / time allocation).
 
 ---
 
 ### 07-REVIEW-006: Undefined stateMap entries at decision time
 
+**Status**: ✅ Resolved — Option A (sample only from defined entries)
 **Type**: Gap
 **Phase**: Requirements
 **Context**: 07-REQ-049 covers the edge case where no candidate direction has a defined stateMap entry at decision time (no cached world has yet been computed for the snake). It falls back to SpacetimeDB's own turn-0 random choice ([01-REQ-042(c)]) or continuation per `lastDirection`. A subtler case: some candidate directions have defined stateMap entries and others don't. The current draft excludes undefined directions from the softmax distribution, implicitly biasing decision toward directions the framework has had time to evaluate. This is reasonable in the general case but could under-explore: a direction that *would* have scored highest but got no compute time because priority pushed it to the back of the queue would be silently skipped.
@@ -307,12 +344,14 @@ The informal spec §6.8 just says "immediately before the turn deadline" without
 - A: Sample only from defined entries. (Current draft.) Simplest; matches "anytime" principle.
 - B: Treat undefined as score 0 and include in softmax. Gives unevaluated directions a shot at selection proportional to temperature.
 - C: Block the scheduled submission pass for a snake until all its candidate directions have ≥ 1 cached world. Slower but fairest.
+**Resolution**: Option A. 07-REQ-049 stays as-is. The round-robin processing rule (07-REQ-041) guarantees that the highest-priority world simulation for each snake populates every not-certain-death direction's stateMap entry before any second-priority worlds are simulated, and those first simulations occur in priority order of cheap heuristics about worthwhile moves. Centaur Server authors are responsible for writing performant Drive/Preference code that fits many world simulations within the available time. If a team's heuristic code is too slow and some directions remain unevaluated at decision time, that is the CentaurTeam's failure to write performant code and it is appropriate that they suffer a less intelligent decision policy as a consequence.
 **Informal spec reference**: §6.8, §6.9 (neither explicit on this case).
 
 ---
 
 ### 07-REVIEW-007: Retirement of a satisfied Drive — timing
 
+**Status**: ✅ Resolved — Option A (retire on fresh post-resolution board)
 **Type**: Ambiguity
 **Phase**: Requirements
 **Context**: 07-REQ-010 says a Drive whose satisfaction predicate evaluated to true "in a given turn's observed state shall be removed from the snake's active portfolio at the turn's close." The informal spec §6.1 says "In the bot's live portfolio, a satisfied Drive is removed after the turn in which satisfaction is detected." The current draft treats "observed state" as meaning the authoritative post-turn-resolution board published by SpacetimeDB, not merely any simulated world where the predicate happened to fire. Removing on simulated satisfaction would be wrong, because a simulated world is a hypothesis, not reality — and multiple simulated worlds could disagree on whether satisfaction holds for the same Drive.
@@ -323,12 +362,14 @@ Consequence of the draft: a Drive whose terminal reward contributes to scoring i
 - A: Retire on fresh post-resolution board when satisfaction predicate is true against it. (Current draft.)
 - B: Retire on simulated satisfaction in the direction that ends up being selected. More optimistic (acts before confirmation).
 - C: Retire on fresh post-resolution board, but only if satisfaction predicate is still true there — otherwise leave the Drive active even if a simulated world predicted satisfaction. (This is the contrapositive of A and is probably what A already says; listed for completeness.)
+**Resolution**: Option A. 07-REQ-010 stays as-is. *Forward-looking note*: the planned extension to multi-ply (multi-turn-ahead) simulation will need to "shadow satisfy" Drives as part of simulating the Centaur's psychological state through multi-turn imagining of possible futures. A Drive satisfied in a hypothetical future turn would need to be removed from the simulated portfolio for deeper plies while remaining active in the authoritative portfolio that tracks real-world outcomes revealed by SpacetimeDB. This is beyond MVP scope and moot at single-ply depth, where satisfaction in a simulated world only affects the terminal reward contribution to that world's score and does not remove the Drive from the active portfolio.
 **Informal spec reference**: §6.1 ("satisfied Drive is removed after the turn in which satisfaction is detected").
 
 ---
 
 ### 07-REVIEW-008: Game-tree-cache clearing and mid-turn fresh boards
 
+**Status**: ✅ Resolved — Option A (clear on turn number change)
 **Type**: Gap
 **Phase**: Requirements
 **Context**: 07-REQ-023 clears the game tree cache at the start of each fresh turn. "Start of turn" here is interpreted as the moment a new authoritative pre-turn board is published to SpacetimeDB subscribers. But between turns the cache is cleared and rebuilt from scratch, which is expensive relative to incremental update. The informal spec §6.6 acknowledges this is a deliberate simplification for the single-ply MVP and notes that multi-ply would retain deeper valid speculation. The question is whether there's a scenario in which the framework receives what it interprets as a "new turn" spuriously — e.g., because of a SpacetimeDB reconnection producing a state snapshot that looks like a new turn but is actually the current turn — and would unnecessarily clear the cache.
@@ -337,12 +378,14 @@ Consequence of the draft: a Drive whose terminal reward contributes to scoring i
 - A: Clear when the turn number observed in SpacetimeDB changes. Robust to reconnects that resurface the current turn, as long as turn number is stable.
 - B: Clear when any pre-turn state field changes (board, items, snake lengths). More aggressive; may clear on spurious updates.
 - C: Clear on the SpacetimeDB `resolve_turn` reducer emitting its "new turn ready" event ([04]'s exported interfaces). Tightly coupled to [04]'s emission contract but most precise.
+**Resolution**: Option A. 07-REQ-023 has been amended to explicitly pin the cache clear trigger to a turn-number transition observed in the framework's SpacetimeDB subscription, with explicit reconnect-safety wording ("A SpacetimeDB reconnection that resurfaces the current turn number shall not trigger a clear."). *Rationale*: at 1-ply depth, at most one of the many simulated worlds remains consistent with the actual turn outcome received from SpacetimeDB. The compute investment lost by clearing the cache each turn is therefore negligible — nearly all cached worlds are invalidated by the real outcome regardless. A future multi-ply extension would retain deeper speculation consistent with the observed outcome, but for single-ply the full reset is the right tradeoff of simplicity over marginal compute savings.
 **Informal spec reference**: §6.6 (does not specify trigger).
 
 ---
 
 ### 07-REVIEW-009: Operator-staged moves for manual snakes and the framework's view of them
 
+**Status**: ✅ Resolved — Option A (direct-to-SpacetimeDB via access token)
 **Type**: Gap
 **Phase**: Requirements
 **Context**: 07-REQ-046 says manual-mode snakes are never staged by the framework. But for simulating teammates (07-REVIEW-002 Option A), the framework may need to read teammate staged moves from Convex/Centaur state or from SpacetimeDB. It's unclear in the informal spec where operator-staged moves for manual snakes physically live before SpacetimeDB receives them — is the operator's browser writing to SpacetimeDB directly via its access token (per [03]'s operator game-participant identity) or is the staging brokered through the Snek Centaur Server?
@@ -353,14 +396,17 @@ If it's direct-to-SpacetimeDB, the framework reads it from its SpacetimeDB subsc
 - A: Operator browsers stage directly to SpacetimeDB via their game-participant access token. The framework observes via SpacetimeDB subscription.
 - B: Operator browsers stage via the Snek Centaur Server runtime, which re-stages to SpacetimeDB. The framework observes via its own runtime state and action log.
 - C: Dual writes: operator browsers stage directly to SpacetimeDB and also record the action in the Centaur action log ([06-REQ-036]); the framework observes via either path.
+**Resolution**: Option A. Staged moves are always mediated exclusively by SpacetimeDB — there is no other state storage mechanism for staged moves besides SpacetimeDB. Convex never learns of move staging events until it receives the full download of game replay logs from SpacetimeDB for long-term persistence ([02-REQ-022]). Operator browsers stage moves directly to SpacetimeDB via their game-participant access token ([03]'s operator identity); the bot framework observes these staged moves via its SpacetimeDB subscription ([02-REQ-023]). No new API surface needed. 07-REQ-034 has been updated to make explicit that the framework reads teammate staged moves from its SpacetimeDB subscription. This is consistent with the staged-move data flow established by [04-REQ-025]/[04-REQ-027] and the exclusion of `move_staged` from the Centaur action log per resolved 06-REVIEW-004.
 **Informal spec reference**: §7.5, §10 ("stage_move" reducer).
 
 ---
 
 ### 07-REVIEW-010: Informal spec filename drift
 
+**Status**: ✅ Resolved — v2.2 is canonical
 **Type**: Ambiguity
 **Phase**: Requirements
 **Context**: Consistent with 02-REVIEW-001 and 06-REVIEW-007. Requirements in this module were extracted from `team-snek-centaur-platform-spec-v2.2.md` on the assumption it supersedes any v2.1 reference in SPEC-INSTRUCTIONS.md. Resolution is shared with the prior reviews.
 **Question**: Confirm v2.2 is canonical. See 02-REVIEW-001.
+**Resolution**: Confirmed. v2.2 is canonical, consistent with 02-REVIEW-001 and 06-REVIEW-007.
 **Informal spec reference**: N/A (meta).
