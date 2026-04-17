@@ -1502,3 +1502,14 @@ The WASM binary encapsulates the complete game engine module: all table schemas,
 **Phase**: Design
 **Resolution**: Option A confirmed viable via SpacetimeDB **Procedures** (beta), which support outgoing HTTP via `ctx.http.fetch()`. However, in-module JWT signing is replaced with a Convex-pre-signed callback token to keep Convex as the sole credential issuer (03-REQ-037) and avoid crypto operations in the WASM runtime. The `notify_game_end` scheduled procedure uses `ctx.http.fetch()` for the POST and presents the Convex-signed game-outcome callback token as a Bearer header. The procedure also reads all replay tables and bundles the complete historical record into the notification payload (see §2.11), enabling Convex to tear down the instance immediately upon receipt. No crypto operations in the WASM runtime. See rewritten §2.10 and §2.11.
 **Decision summary**: Reducers cannot make HTTP calls, but Procedures can. The game-end notification is implemented as a scheduled procedure (`notify_game_end`) triggered via the `game_end_notification_schedule` schedule table. Authentication uses a Convex-signed JWT (game-outcome callback token) provisioned at init time, not an in-module-constructed JWT. The procedure bundles the complete replay data into the notification payload. *(Amended per 05-REVIEW-015 resolution.)*
+
+---
+
+### 04-REVIEW-020: Spectator/operator scoreboard view
+
+**Type**: Gap
+**Phase**: Design
+**Context**: 08-REVIEW-018 (resolved) pins the principle that client UIs render team-level aggregate quantities (team score, alive-snake count, aggregate length) as delivered by purpose-built SpacetimeDB views and never reconstruct them client-side from raw per-snake subscription data. This is necessary so that invisibility (per [04-REQ-047]) cannot leak through omitted client-side contributions and so that score authority is single-sourced server-side. [08-REQ-084] (amended) now requires that the spectator scoreboard be sourced from a dedicated SpacetimeDB scoreboard view; [08-REQ-084b] (added, negative) forbids client-side aggregation. [04] Phase 2 §2.9 (visibility filtering / RLS) and §2.12 (subscription patterns) currently do not specify a `scoreboard_view`. This item exists so the gap is not lost.
+**Question**: Add a per-game `scoreboard_view` (or equivalent) to the [04] design that publishes per-team aggregates `(teamId, teamScore, aliveSnakeCount, aggregateLength)` computed server-side over the true alive-snake set (including invisible snakes), subscribable by spectator and operator clients alike, and exposing only the aggregates — never per-snake state for invisible snakes.
+**Informal spec reference**: N/A (downstream impact from 08-REVIEW-018).
+
