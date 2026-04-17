@@ -72,6 +72,8 @@ Initialisation shall use the team's heuristic default configuration as captured 
 
 ### 6.5 Game-Scoped Selection State
 
+The term **selection** in this module refers exclusively to the exclusive-lock operator-control affordance specified in this section ([06-REQ-018] through [06-REQ-024]): a selection grants a single operator the right to stage moves and toggle manual mode for a snake, is persisted in Convex, and is enforced by the function-contract surface of [06]. The separate non-mutating per-client **inspection** affordance — by which a replay viewer or live-game coach client chooses, in their own UI only, which snake's portfolio / stateMap / worst-case world / decision breakdown / per-direction candidate highlights to display — is owned by [08] (see [08-REQ-074] and [08-REQ-052c], resolved per 08-REVIEW-008) and adds no state, no mutation, and no schema element to this module.
+
 **06-REQ-018**: For each snake in each active game the subsystem shall persist a **selection record** comprising:
 - The user identity currently selecting the snake, or null if the snake is unselected.
 - A manual-mode flag indicating whether the snake is in manual mode ([08]).

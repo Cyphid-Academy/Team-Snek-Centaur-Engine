@@ -244,11 +244,15 @@
 
 **08-REQ-052b** *(negative)*: Coach mode shall not expose any affordance that would cause a write to Convex or to SpacetimeDB on behalf of the team being coached. Any UI control that would, in member mode, dispatch such a write shall be either hidden or rendered disabled in coach mode.
 
+**08-REQ-052c**: Coach mode (08-REQ-052a) shall expose an **inspection** affordance with semantics identical to the replay-mode inspection affordance specified in the amended 08-REQ-074. Specifically: a coach client may at any time inspect any snake on the team being coached; the inspection is purely client-local; the inspection shall never write any Convex or SpacetimeDB state; the inspection shall never produce a selection shadow on the board; the inspection shall never displace or otherwise interact with any operator's selection; and each coach client may have at most one inspected snake at a time, held only in that client's local UI state. Coach inspection shall coexist with the live operator selection shadows produced by the team's connected operators per [08-REQ-039]: the coach simultaneously sees the team's operators' real selection shadows on the board and the coach's own client-local inspection state in their portfolio / stateMap / worst-case world / decision breakdown / per-direction candidate highlight panels. The coach's read scope is already established by [05-REQ-067] (and, for admin coaches, [05-REQ-066] / [05-REQ-067]); this requirement adds no new Convex mutation, no new SpacetimeDB write path, and no new authorisation rule. *(Resolved per 08-REVIEW-008.)*
+
+**08-REQ-052d** *(negative)*: Coach inspection (08-REQ-052c) shall not be exposed through any affordance whose visual or interaction grammar could be confused with operator selection. In particular, the click-to-select gesture used by team members per [08-REQ-042] shall be replaced or visibly differentiated in coach mode (for example, by a distinct cursor, a distinct hover treatment, a distinct activation gesture such as click-with-modifier or right-click, and/or a distinct on-board indicator that is plainly not a selection shadow), so that a coach can never mistake an inspection action for a selection action and so that other observers cannot mistake the coach's inspection state for an operator's selection. *(Resolved per 08-REVIEW-008.)*
+
 **08-REQ-053**: Selecting a Drive type from the dropdown shall activate the targeting mode appropriate to that Drive type's target type:
 - **Snake targeting**: the board enters a mode in which only those snakes for which the Drive's target-eligibility predicate ([07-REQ-007]) returns true are highlighted as clickable; ineligible snakes are visually dimmed; clicking an eligible snake confirms it as the Drive's target.
 - **Cell targeting**: the board enters a mode in which only those cells for which the Drive's target-eligibility predicate returns true are highlighted as clickable; ineligible cells are visually dimmed; clicking an eligible cell confirms it as the Drive's target.
 
-**08-REQ-054**: In either targeting mode, pressing Tab shall cycle the highlighted candidate target through eligible targets in order of A*-distance from the selected snake's head, nearest first. Pressing Escape shall cancel targeting without adding the Drive and shall not alter the snake's selection state. See REVIEW 08-REVIEW-006.
+**08-REQ-054**: In either targeting mode, pressing Tab shall cycle the highlighted candidate target through eligible targets in a fully deterministic order: primary sort by A*-distance from the selected snake's head, nearest first; secondary sort (for candidates at equal A*-distance) by clockwise angle in board coordinates from the selected snake's current head direction, starting at 0° (straight ahead) and increasing clockwise through 360°; tertiary sort (for candidates that remain tied after the first two keys) by target identity — for snake targets the snake id ascending, and for cell targets the cell coordinates in row-major order (row ascending, then column ascending). Pressing Escape shall cancel targeting without adding the Drive and shall not alter the snake's selection state. *(Resolved per 08-REVIEW-006.)*
 
 **08-REQ-055**: Confirmation of a target shall cause the Drive to be added to the snake's portfolio at that Drive type's default weight via [06-REQ-015]. No additional operator confirmation beyond the target click shall be required.
 
@@ -284,7 +288,7 @@
 
 **08-REQ-070b**: The board-level replay mode shall display a per-turn **event log** listing the turn events of the currently-selected turn as produced by turn resolution — at minimum death events (with cause), food-eaten events, potion-collection events, severing events, spawn events, and effect-application / effect-cancellation events. The set of event types shall match the closed enumeration defined by [01] and [04].
 
-**08-REQ-071**: The team-perspective replay mode shall present the same UI components as the live operator interface (§§8.9–8.13), rendered in a read-only mode in which all mutating affordances — move staging, Drive add/remove/edit, manual-mode toggling, operator-mode toggling, turn submission — are disabled, while all state-inspection affordances — snake selection, direction preview, worst-case world preview, decision breakdown table — remain fully functional.
+**08-REQ-071**: The team-perspective replay mode shall present the same UI components as the live operator interface (§§8.9–8.13), rendered in a read-only mode in which all mutating affordances — move staging, Drive add/remove/edit, manual-mode toggling, operator-mode toggling, turn submission — are disabled, while all state-inspection affordances — snake **inspection** (the client-local non-mutating affordance per [08-REQ-074], not the operator-control selection mechanic of [06] which is unavailable in replay), direction preview, worst-case world preview, decision breakdown table — remain fully functional.
 
 **08-REQ-071a**: The team-perspective replay mode shall be available exclusively for games in which the logged-in human participated as a team member.
 
@@ -292,9 +296,9 @@
 
 **08-REQ-073**: Historical operator selections shall be rendered during team-perspective replay as coloured shadows on the appropriate snakes using the same per-operator colours used in live play. An operator who was not connected at a given historical moment shall not produce a shadow for that moment.
 
-**08-REQ-074**: The replay viewer shall permit the logged-in human to select a snake for inspection at the scrubbed timestamp. Replay-mode selection shall not produce any selection shadow on the board and shall not issue any Centaur state mutation — the replay viewer acts as an invisible additional observer. Historical operator shadows reconstructed from the action log shall continue to be displayed alongside the invisible replay selection. See REVIEW 08-REVIEW-008.
+**08-REQ-074**: The replay viewer shall permit the logged-in human to **inspect** a snake at the scrubbed timestamp. Inspection is a purely client-local affordance, distinct from the operator-control **selection** affordance owned by [06] ([06-REQ-018] through [06-REQ-024]): each viewer client may have at most one inspected snake at a time; inspection state is held only in the viewer's client-local UI state; inspection shall never write any Convex or SpacetimeDB state; inspection shall never produce a selection shadow on the board; and inspection shall never displace or otherwise interact with any operator's selection. Historical operator selection shadows reconstructed from the action log per [08-REQ-073] shall continue to be displayed alongside the inspecting client's local inspection state, unaffected by the viewer's choice of inspected snake. *(Resolved per 08-REVIEW-008.)*
 
-**08-REQ-075**: The replay viewer shall permit inspection of any snake on the viewed team at any scrubbed moment regardless of which operator (if any) had that snake selected at that moment in the original game.
+**08-REQ-075**: The replay viewer shall permit **inspection** of any snake on the viewed team at any scrubbed moment regardless of which operator (if any) had that snake selected at that moment in the original game.
 
 **08-REQ-075a** *(negative)*: The team-perspective replay shall not display, reconstruct, or expose any state belonging to opposing teams beyond what was visible through [04]'s RLS rules to the owning team at the original time of play. In particular, any opposing snake that was invisible to the owning team at a given historical moment shall remain invisible in replay at that moment.
 
@@ -532,7 +536,7 @@
 
 ---
 
-### 08-REVIEW-006: Tab cycle deterministic tie-break in targeting
+### 08-REVIEW-006: Tab cycle deterministic tie-break in targeting — **RESOLVED**
 
 **Type**: Gap
 **Phase**: Requirements
@@ -543,6 +547,10 @@
 - B: Secondary sort by angle from the snake's head in a fixed rotation direction.
 - C: Leave undefined; the operator must click directly if Tab produces ambiguity.
 **Informal spec reference**: §7.6 ("in order of A* distance from the snake's head").
+
+**Decision**: Option B with Option A as a tertiary fallback. The Tab cycle order shall be fully deterministic with three sort keys, in priority: (1) A*-distance from the selected snake's head, ascending; (2) clockwise angle in board coordinates from the snake's current head direction, starting at 0° (straight ahead) and increasing through 360°; (3) target identity — snake id ascending for snake targets, cell coordinates in row-major order (row then column ascending) for cell targets. The third key exists only to fully discharge the determinism obligation in pathological cases (e.g., two distinct candidates that share the same A*-distance and the same clockwise angle from the head — practically impossible for cell targets and only possible for snake targets if two candidate snakes' bodies somehow project onto exactly the same head-relative angle, which the head-A* distance key has already disambiguated whenever the candidate snakes occupy distinct cells).
+**Rationale**: Clockwise-from-head is rotationally meaningful to the operator: the snake has an orientation, and "next clockwise" maps onto the operator's head-relative mental model of the board. A pure global identity sort (Option A) produces orientationally meaningless cycle orders that vary unpredictably as targets move around the board relative to the snake. Option C (leaving the tiebreak undefined) fails the determinism property that operator muscle memory depends on. The identity-based tertiary key keeps Option B fully deterministic without sacrificing its head-relative semantics in any realistic case.
+**Affected requirements/design elements**: 08-REQ-054 amended to specify the three-key deterministic Tab cycle order.
 
 ---
 
@@ -565,7 +573,7 @@
 
 ---
 
-### 08-REVIEW-008: Replay-mode selection and Centaur state
+### 08-REVIEW-008: Replay-mode selection and Centaur state — **RESOLVED**
 
 **Type**: Ambiguity
 **Phase**: Requirements
@@ -575,6 +583,28 @@
 - A: Purely client-local; no Convex state. (Current draft.)
 - B: Add a replay-scoped selection record to [06] for future shared replay sessions.
 **Informal spec reference**: §13.3 ("The replay viewer acts as an invisible additional observer").
+
+**Decision**: Option A — non-mutating snake viewing (replay viewer per [08-REQ-074] and live-game coach mode per [08-REQ-052a]) is purely client-local; no Convex state is added and no SpacetimeDB write is issued. Even if shared replay sessions are added in the future, the exclusive-lock semantics of the existing selection mechanic ([06-REQ-018] through [06-REQ-024]) are inappropriate for shared replay gaze-tracking, because two replay viewers inspecting different snakes must not displace each other's view; that future extension would require a different (non-exclusive) state model and is out of scope here. Live-game coach inspection ([05-REQ-067], [08-REQ-052a]) needs the same affordance and the same semantics as replay inspection, since both are "invisible additional observer" use cases.
+
+The decision additionally adopts the following terminology distinction across Module 08, applied uniformly to prose, requirement wording, identifier-style names, mutation names, Convex field names, and UI affordance labels:
+
+- **selection** / **selector** / **selected snake** / `selectSnake` / `deselectSnake` / `operatorUserId` — retained for the existing exclusive-lock control affordance owned by [06]. A selection grants the holding operator the right to stage moves and toggle manual mode for the snake; only one operator at a time may hold a selection on any given snake; selections are persisted in Convex (`snake_operator_state.operatorUserId`) and produce per-operator coloured **selection shadows** on the board ([08-REQ-039]). All [06] identifiers and the existing [08] selection-acquisition prose ([08-REQ-039], [08-REQ-042], [08-REQ-043]) keep the "selection" name unchanged.
+- **inspection** / **inspector** / **inspected snake** / `inspectSnake` / `clearInspection` / `inspectedSnakeId` — the new, non-mutating, purely client-local affordance by which a single viewer client (a replay viewer per [08-REQ-074] or a coach in live-game coach mode per [08-REQ-052a] / [08-REQ-052c]) chooses which snake's portfolio, stateMap, decision breakdown, worst-case world, and per-direction candidate highlights are displayed in their own UI. Inspection state is held in client-local UI state only; `inspectedSnakeId` is a client-local field, **never** a Convex field. Inspection never produces a selection shadow on the board, never issues any Convex or SpacetimeDB mutation, never displaces or interacts with any operator's selection, and is invisible to every other client.
+
+Each viewer client may have at most one inspected snake at a time. Replay inspection and coach inspection share identical semantics; the only difference is the data source on which the inspection view is rendered (persisted replay + reconstructed action log for replay inspection; live SpacetimeDB and Convex subscriptions for coach inspection).
+
+**Alternative names considered and rejected** (for traceability of the naming choice):
+- **focus** / `focusedSnakeId` — overloaded with the established UI meaning of "input focus" (the focused element receiving keyboard events); also lacks a clean noun form for the holder ("focuser" reads awkwardly).
+- **spotlight** / `spotlightedSnakeId` — connotes a presentational/broadcast metaphor (the snake is highlighted to others) rather than a private viewing decision; misleading for a per-client affordance.
+- **gaze** / `gazedSnakeId` — matches the "gaze-tracking" framing in the original review prompt but is awkward as a verb in identifier names (`gazeSnake`, `gazeAtSnake`) and has no commonly understood adjective form.
+- **preview** / `previewedSnakeId` — already used in this module to mean the worst-case world preview ([08-REQ-048]) and the board preview ([08-REQ-027i]); reusing it for snake viewing would collide with both.
+- **view-selection** / `viewSelectedSnakeId` — preserves "selection" in the name and would defeat the entire purpose of the terminology distinction.
+
+**Recommended term: "inspection"**, because (a) [08-REQ-074] already uses the phrase "select a snake for inspection", so the verb is already in this module's vocabulary; (b) "inspection" is semantically distinct from "selection" in everyday English (one inspects without taking ownership); (c) the noun/verb/adjective forms (inspect / inspector / inspected / inspection) are uniformly available and read naturally in identifier names, prose, and UI labels.
+
+**Rationale**: Option A keeps [06]'s existing exclusive-lock selection semantics — and its Convex schema, mutations, and invariants — entirely unchanged for the existing operator-control affordance. The non-mutating viewing affordance for replay viewers and coaches is introduced without any Convex schema change or any new mutation; it is realised purely as client-local UI state in this module's web application. The "selection vs inspection" terminology distinction makes it lexically obvious at every use site which of the two affordances is intended, eliminating the structural ambiguity that motivated the original review.
+
+**Affected requirements/design elements**: 08-REQ-074 reworded to use "inspection" terminology and to make explicit per-client / no-shadow / no-mutation semantics. 08-REQ-075 reworded to "inspection of any snake". 08-REQ-052c added (coach mode inspection affordance with semantics identical to replay inspection). 08-REQ-052d added *(negative)* (coach inspection must not use a gesture grammar confusable with operator selection). 08-REQ-071 reworded to refer to "snake inspection" within team-perspective replay rather than "snake selection". Module 06 §6.5 receives a single-sentence clarifying note that "selection" in that module refers exclusively to the exclusive-lock control affordance and that the separate non-mutating per-client **inspection** affordance is owned by [08] and adds no state to [06]; no [06] schema, mutation, identifier, or interface changes. [05-REQ-067] read scope is unchanged and is cross-referenced from the new coach-inspection requirement.
 
 ---
 
