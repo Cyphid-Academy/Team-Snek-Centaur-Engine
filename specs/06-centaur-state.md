@@ -36,12 +36,12 @@
 
 **06-REQ-011**: The subsystem shall persist, per Centaur Team, a **global centaur parameter record** (`global_centaur_params`) containing at minimum:
 - The softmax global temperature used for bot decisioning ([07]).
-- The **automatic submission time allocation** (`defaultAutomaticTimeAllocationMs`) — the per-snake auto-submission time allocation applied during gameplay per [07-REQ-044].
+- The **automatic submission time allocation** (`defaultAutomaticTimeAllocationMs`) — the team-level turn deadline parameter used by the bot framework's submission process per [07-REQ-044] / [07-REQ-045].
 - The **scheduled-submission interval** (`defaultScheduledSubmissionIntervalMs`) — the cadence at which the bot framework's scheduled-submission pass fires per [07-REQ-044]; default 100 ms.
 - The **imminent-deadline threshold** (`defaultImminentThresholdMs`) — the lead-time margin subtracted from the chess-clock deadline when arming the framework's final-submission timer per [07-REQ-045]; default 50 ms.
 - A `pinnedHeuristics` ordered array of heuristic IDs specifying Drive dropdown pinning order ([06-REQ-007]).
 
-These values serve as team-level defaults. At game start, they are copied into the game-scoped state record (`game_centaur_state`) and may be independently adjusted during the game without affecting the team defaults. *(Amended per 08-REVIEW-005 resolution: `pinnedHeuristics` added. Further amended per 08-REVIEW-011 resolution: `defaultOperatorMode` and `defaultTurn0AutomaticTimeAllocationMs` removed — operator-mode is replaced by per-operator ready-state per [06-REQ-040b]; turn-0 timing is now governed by the chess-clock's existing turn-0 budget without a separate auto-submission allocation. Further amended per 07-REVIEW-012 resolution: `defaultScheduledSubmissionIntervalMs` and `defaultImminentThresholdMs` added — promoted from framework constants in [07] §3.5 to per-team bot parameters so cross-region hosting topologies can jointly retune both pipeline intervals.)*
+These values serve as team-level defaults. At game start, they are copied into the game-scoped state record (`game_centaur_state`) and may be independently adjusted during the game without affecting the team defaults. *(Amended per 08-REVIEW-005, 08-REVIEW-011, and 07-REVIEW-012 resolutions.)*
 
 **06-REQ-012** *(negative)*: No runtime other than the Captain of the owning Centaur Team shall write to the bot parameter record. This is a restatement of [02-REQ-045] at the data layer and is enforced by function-contract checks in the subsystem. *(Amended per 08-REVIEW-001 resolution: bot parameter writes are Captain-only.)*
 
@@ -155,7 +155,7 @@ Read access shall be scoped as follows. During a live (in-progress) game, a memb
 - Computed display state snapshots (snake, stateMap, worst-case worlds, heuristic outputs), written as full snapshots per [06-REQ-028]. *(Amended per 07-REVIEW-014 resolution: `annotations` removed. Further amended per the 07-REVIEW-014 follow-up resolution: `heuristicViolations` is also not part of the snapshot — diagnostic violations are surfaced via the server process log per 07-REQ-009b.)*
 - Temperature override changes (snake, new value).
 
-*(Amended per 08-REVIEW-011 resolution: the `mode_toggled` event category is removed and replaced by `operator_ready_toggled`. There is no longer a team-level operator mode to toggle.)*
+*(Amended per 08-REVIEW-011 resolution.)*
 
 Move staging events are not recorded in the Centaur action log; they are recorded in the SpacetimeDB append-only staged-moves log ([04-REQ-025], [04-REQ-027]) where authoritativeness of the staged move and its log entry are guaranteed to coincide. (See resolved 06-REVIEW-004.)
 
@@ -172,7 +172,7 @@ All other event categories may be written by either the Snek Centaur Server or a
 
 ### 6.9 Game-Scoped Team State
 
-**06-REQ-040a**: For each game, the subsystem shall persist a **game-scoped team state record** per CentaurTeam, containing at minimum `globalTemperature`, `automaticTimeAllocationMs`, `scheduledSubmissionIntervalMs`, and `imminentThresholdMs`. All fields are initialised from the team's `global_centaur_params` defaults at game start and are independently mutable during the game. This record is the live source of truth for the effective parameter values during gameplay; downstream readers ([07], [08]) read it directly. (See resolved 06-REVIEW-008. *Amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed — operator-mode is replaced by per-operator ready-state per [06-REQ-040b]; turn-0 timing is governed by the chess-clock's existing turn-0 budget without a separate auto-submission allocation. Further amended per 07-REVIEW-012 resolution: `scheduledSubmissionIntervalMs` and `imminentThresholdMs` mirrored from `global_centaur_params` defaults.*)
+**06-REQ-040a**: For each game, the subsystem shall persist a **game-scoped team state record** per CentaurTeam, containing at minimum `globalTemperature`, `automaticTimeAllocationMs`, `scheduledSubmissionIntervalMs`, and `imminentThresholdMs`. All fields are initialised from the team's `global_centaur_params` defaults at game start and are independently mutable during the game. This record is the live source of truth for the effective parameter values during gameplay; downstream readers ([07], [08]) read it directly. (See resolved 06-REVIEW-008. *Amended per 08-REVIEW-011 and 07-REVIEW-012 resolutions.*)
 
 **06-REQ-040b**: For each game, the subsystem shall persist a **per-operator ready-state record** in a dedicated table `operator_ready_state`. Each record is keyed by `(gameId, operatorUserId)` and carries at minimum a boolean `ready` flag, the `turn` for which the ready signal applies, and an `updatedAt` timestamp. Records are written exclusively by the operator they describe via the `setOperatorReady` mutation defined in §2.2.3. At the start of each turn (publish of the next authoritative pre-turn board state per [04]), every operator's `ready` flag for that game shall be reset to `false` (whether by explicit batch reset or by the contract that readers treat any record whose `turn` differs from the current turn as `not-ready`). Coaches and admins acting via implicit-coach permission ([05-REQ-066], [05-REQ-067]) shall not have records in this table — they have no ready-state per [08-REQ-064a]. The `setOperatorReady` mutation transactionally writes an `operator_ready_toggled` action-log entry per [06-REQ-036]. (Added per 08-REVIEW-011 resolution.)
 
@@ -692,7 +692,7 @@ All five writes (up to three `snake_operator_state` updates plus corresponding a
 
 Satisfies 06-REQ-033, 06-REQ-034, 06-REQ-036.
 
-The `action` field of `centaur_action_log` is a discriminated union with 10 event types (the informal spec's 11 types minus `move_staged`, with `mode_toggled` replaced by `operator_ready_toggled` per 08-REVIEW-011). Move staging is excluded from this log; staged moves are recorded in the SpacetimeDB append-only log where authoritativeness is guaranteed (see resolved 06-REVIEW-004).
+The `action` field of `centaur_action_log` is a discriminated union with 10 event types. Move staging is excluded from this log; staged moves are recorded in the SpacetimeDB append-only log where authoritativeness is guaranteed (see resolved 06-REVIEW-004).
 
 ```typescript
 const centaurActionEvent = v.union(
@@ -1176,7 +1176,7 @@ interface GameCentaurStateInitContract {
 
 2. **[07] must write computed display state via `updateSnakeBotState`.** The bot framework is the sole writer of `snake_bot_state` documents, authenticated via the per-CentaurTeam game credential. Each write is a full snapshot (not a delta) per [06-REQ-028]. The mutation transactionally writes a `statemap_updated` action log entry.
 
-3. **[08] must implement the operator mutation interface.** The live operator interface calls `selectSnake`, `deselectSnake`, `toggleManualMode`, `addDrive`, `removeDrive`, `setHeuristicOverride`, `setTemperatureOverride`, and `setOperatorReady` via the Convex client, authenticated via Google OAuth. Each mutation transactionally writes its corresponding action log entry — the client does not need to write log entries separately. *(Amended per 08-REVIEW-011 resolution: `toggleOperatorMode` replaced by `setOperatorReady` per [06-REQ-040b].)*
+3. **[08] must implement the operator mutation interface.** The live operator interface calls `selectSnake`, `deselectSnake`, `toggleManualMode`, `addDrive`, `removeDrive`, `setHeuristicOverride`, `setTemperatureOverride`, and `setOperatorReady` via the Convex client, authenticated via Google OAuth. Each mutation transactionally writes its corresponding action log entry — the client does not need to write log entries separately. *(Amended per 08-REVIEW-011 resolution.)*
 
 4. **[08] must subscribe to `getGameCentaurState` for live updates.** The Convex reactive query system delivers updates when any underlying document changes (operator state, bot state, drives, overrides, or game-level state).
 
@@ -1320,4 +1320,4 @@ interface GameCentaurStateInitContract {
 
 **Decision**: Option A — add a game-scoped record (`game_centaur_state`) for current operator mode and any other game-scoped team-level state. The record is updated on toggle, and readers consult it directly rather than scanning the action log.
 **Rationale**: Option B requires every reader (bot framework, operator interface) to scan the action log for the latest `mode_toggled` entry every time it needs the current mode. This adds unnecessary latency and complexity, especially for the bot framework which needs the current mode to determine turn-submission timing. A dedicated record is cheap to maintain (one document per team per game, updated only on mode toggle) and provides efficient direct reads via Convex's reactive query system.
-**Affected requirements/design elements**: 06-REQ-040a added. Design §2.1.5 defines `game_centaur_state` table (including `globalTemperature`, `automaticTimeAllocationMs`, `turn0AutomaticTimeAllocationMs` initialised from team defaults). §2.2.3 defines `toggleOperatorMode` and `setGameParamOverrides` mutations. §2.2.6 initializes the record at game start from `global_centaur_params` defaults.
+**Affected requirements/design elements**: 06-REQ-040a added. Design §2.1.5 defines `game_centaur_state` table (including `globalTemperature`, `automaticTimeAllocationMs`, `turn0AutomaticTimeAllocationMs` initialised from team defaults). §2.2.3 defines `toggleOperatorMode` and `setGameParamOverrides` mutations. §2.2.6 initializes the record at game start from `global_centaur_params` defaults. *(Amended per 08-REVIEW-011 resolution: `turn0AutomaticTimeAllocationMs` and `toggleOperatorMode` are removed from this Affected list — operator-mode is replaced by per-operator ready-state per [06-REQ-040b] (`setOperatorReady` mutation, `operator_ready_state` table), and turn-0 timing is governed by the chess-clock's existing turn-0 budget without a separate auto-submission allocation. The current `game_centaur_state` schema and §2.2.3 mutation surface are the live source of truth; this snapshot is retained only for review-history fidelity.)*
