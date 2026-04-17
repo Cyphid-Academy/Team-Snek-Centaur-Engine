@@ -36,12 +36,10 @@
 
 **06-REQ-011**: The subsystem shall persist, per Centaur Team, a **global centaur parameter record** (`global_centaur_params`) containing at minimum:
 - The softmax global temperature used for bot decisioning ([07]).
-- The default operator mode (Centaur or Automatic) that the live operator interface ([08]) starts a game in.
-- The automatic-mode time allocation applied to turns other than turn 0.
-- The automatic-mode time allocation applied to turn 0.
+- The **automatic submission time allocation** (`defaultAutomaticTimeAllocationMs`) — the per-snake auto-submission time allocation applied during gameplay per [07-REQ-044].
 - A `pinnedHeuristics` ordered array of heuristic IDs specifying Drive dropdown pinning order ([06-REQ-007]).
 
-These values serve as team-level defaults. At game start, they are copied into the game-scoped state record (`game_centaur_state`) and may be independently adjusted during the game without affecting the team defaults. *(Amended per 08-REVIEW-005 resolution: `pinnedHeuristics` added.)*
+These values serve as team-level defaults. At game start, they are copied into the game-scoped state record (`game_centaur_state`) and may be independently adjusted during the game without affecting the team defaults. *(Amended per 08-REVIEW-005 resolution: `pinnedHeuristics` added. Further amended per 08-REVIEW-011 resolution: `defaultOperatorMode` and `defaultTurn0AutomaticTimeAllocationMs` removed — operator-mode is replaced by per-operator ready-state per [06-REQ-040b]; turn-0 timing is now governed by the chess-clock's existing turn-0 budget without a separate auto-submission allocation.)*
 
 **06-REQ-012** *(negative)*: No runtime other than the Captain of the owning Centaur Team shall write to the bot parameter record. This is a restatement of [02-REQ-045] at the data layer and is enforced by function-contract checks in the subsystem. *(Amended per 08-REVIEW-001 resolution: bot parameter writes are Captain-only.)*
 
@@ -149,10 +147,12 @@ Read access shall be scoped as follows. During a live (in-progress) game, a memb
 - Manual-mode toggling (snake, new value).
 - Drive addition and removal (snake, Drive type, target type, target, weight).
 - Heuristic weight and activation changes (snake, heuristic, old weight, new weight, old active state, new active state).
-- Operator-mode changes (new mode).
+- **Per-operator ready-state changes** (`operator_ready_toggled`: operator user identity, turn, new ready value).
 - Team-side turn submission events.
 - Computed display state snapshots (snake, stateMap, worst-case worlds, annotations, heuristic outputs), written as full snapshots per [06-REQ-028].
 - Temperature override changes (snake, new value).
+
+*(Amended per 08-REVIEW-011 resolution: the `mode_toggled` event category is removed and replaced by `operator_ready_toggled`. There is no longer a team-level operator mode to toggle.)*
 
 Move staging events are not recorded in the Centaur action log; they are recorded in the SpacetimeDB append-only staged-moves log ([04-REQ-025], [04-REQ-027]) where authoritativeness of the staged move and its log entry are guaranteed to coincide. (See resolved 06-REVIEW-004.)
 
@@ -169,7 +169,9 @@ All other event categories may be written by either the Snek Centaur Server or a
 
 ### 6.9 Game-Scoped Team State
 
-**06-REQ-040a**: For each game, the subsystem shall persist a **game-scoped team state record** per CentaurTeam, containing at minimum the current operator mode (Centaur or Automatic), `globalTemperature`, `automaticTimeAllocationMs`, and `turn0AutomaticTimeAllocationMs`. All fields are initialised from the team's `global_centaur_params` defaults at game start and are independently mutable during the game. This record is the live source of truth for operator mode and effective parameter values during gameplay; downstream readers ([07], [08]) read it directly. (See resolved 06-REVIEW-008.)
+**06-REQ-040a**: For each game, the subsystem shall persist a **game-scoped team state record** per CentaurTeam, containing at minimum `globalTemperature` and `automaticTimeAllocationMs`. All fields are initialised from the team's `global_centaur_params` defaults at game start and are independently mutable during the game. This record is the live source of truth for the effective parameter values during gameplay; downstream readers ([07], [08]) read it directly. (See resolved 06-REVIEW-008. *Amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed — operator-mode is replaced by per-operator ready-state per [06-REQ-040b]; turn-0 timing is governed by the chess-clock's existing turn-0 budget without a separate auto-submission allocation.*)
+
+**06-REQ-040b**: For each game, the subsystem shall persist a **per-operator ready-state record** in a dedicated table `operator_ready_state`. Each record is keyed by `(gameId, operatorUserId)` and carries at minimum a boolean `ready` flag, the `turn` for which the ready signal applies, and an `updatedAt` timestamp. Records are written exclusively by the operator they describe via the `setOperatorReady` mutation defined in §2.2.3. At the start of each turn (publish of the next authoritative pre-turn board state per [04]), every operator's `ready` flag for that game shall be reset to `false` (whether by explicit batch reset or by the contract that readers treat any record whose `turn` differs from the current turn as `not-ready`). Coaches and admins acting via implicit-coach permission ([05-REQ-066], [05-REQ-067]) shall not have records in this table — they have no ready-state per [08-REQ-064a]. The `setOperatorReady` mutation transactionally writes an `operator_ready_toggled` action-log entry per [06-REQ-036]. (Added per 08-REVIEW-011 resolution.)
 
 ---
 
@@ -228,12 +230,12 @@ heuristic_config: defineTable({
 global_centaur_params: defineTable({
   centaurTeamId: v.id("centaur_teams"),
   defaultGlobalTemperature: v.number(),
-  defaultOperatorMode: v.union(v.literal("centaur"), v.literal("automatic")),
   defaultAutomaticTimeAllocationMs: v.number(),
-  defaultTurn0AutomaticTimeAllocationMs: v.number(),
   pinnedHeuristics: v.array(v.string()),
 }).index("by_team", ["centaurTeamId"])
 ```
+
+*(Schema amended per 08-REVIEW-011 resolution: `defaultOperatorMode` and `defaultTurn0AutomaticTimeAllocationMs` removed.)*
 
 #### 2.1.2 Game-Scoped Per-Snake Operator State
 
@@ -323,15 +325,36 @@ snake_heuristic_overrides: defineTable({
 game_centaur_state: defineTable({
   gameId: v.id("games"),
   centaurTeamId: v.id("centaur_teams"),
-  operatorMode: v.union(v.literal("centaur"), v.literal("automatic")),
   globalTemperature: v.number(),
   automaticTimeAllocationMs: v.number(),
-  turn0AutomaticTimeAllocationMs: v.number(),
 }).index("by_game_team", ["gameId", "centaurTeamId"])
 ```
 
-- All fields are initialised from `global_centaur_params` at game start: `operatorMode` from `defaultOperatorMode`, `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`, `turn0AutomaticTimeAllocationMs` from `defaultTurn0AutomaticTimeAllocationMs`. Once initialised, each field is independently mutable during the game without affecting the team defaults.
+- All fields are initialised from `global_centaur_params` at game start: `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`. Once initialised, each field is independently mutable during the game without affecting the team defaults.
 - **Uniqueness invariant**: at most one document per `(gameId, centaurTeamId)` pair; enforced by `initializeGameCentaurState` (creates exactly one) and game-scoped mutations (query `by_game_team` and patch in place).
+- *(Schema amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed.)*
+
+**`operator_ready_state`** — Game-scoped per-operator ready-state record [06-REQ-040b]. One document per `(gameId, operatorUserId)`.
+
+```typescript
+operator_ready_state: defineTable({
+  gameId: v.id("games"),
+  centaurTeamId: v.id("centaur_teams"),
+  operatorUserId: v.id("users"),
+  ready: v.boolean(),
+  turn: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_game", ["gameId"])
+  .index("by_game_operator", ["gameId", "operatorUserId"])
+  .index("by_game_team", ["gameId", "centaurTeamId"])
+```
+
+- Written exclusively by the operator the record describes via `setOperatorReady` (§2.2.3).
+- A reader treats any record whose `turn` differs from the current turn as `not-ready`; this avoids requiring an explicit batch-reset transaction at the start of every turn while still satisfying the per-turn reset semantics of [06-REQ-040b].
+- Coaches and admins acting via implicit-coach permission have no records in this table per [08-REQ-064a].
+- **Uniqueness invariant**: at most one document per `(gameId, operatorUserId)` pair; enforced by `setOperatorReady` (queries `by_game_operator` and upserts in place).
+- *(Table added per 08-REVIEW-011 resolution.)*
 
 #### 2.1.6 Centaur Action Log
 
@@ -405,14 +428,12 @@ Authorization: caller must be the Captain of the specified CentaurTeam (Google O
 mutation upsertGlobalCentaurParams(args: {
   centaurTeamId: Id<"centaur_teams">,
   defaultGlobalTemperature: number,
-  defaultOperatorMode: "centaur" | "automatic",
   defaultAutomaticTimeAllocationMs: number,
-  defaultTurn0AutomaticTimeAllocationMs: number,
   pinnedHeuristics: string[],
 }): void
 ```
 
-Authorization: caller must be the Captain of the specified CentaurTeam. *(Amended per 08-REVIEW-001 resolution: Captain-only. Amended per 08-REVIEW-005 resolution: `pinnedHeuristics` added.)*
+Authorization: caller must be the Captain of the specified CentaurTeam. *(Amended per 08-REVIEW-001 resolution: Captain-only. Amended per 08-REVIEW-005 resolution: `pinnedHeuristics` added. Amended per 08-REVIEW-011 resolution: `defaultOperatorMode` and `defaultTurn0AutomaticTimeAllocationMs` removed.)*
 
 #### 2.2.2 Game-Scoped Operator Mutations
 
@@ -496,17 +517,17 @@ Authorization: caller must be a member of the CentaurTeam that owns the snake. W
 
 #### 2.2.3 Game-Scoped Team Mutations
 
-**Operator mode toggle** — `toggleOperatorMode` [06-REQ-040a].
+**Per-operator ready-state toggle** — `setOperatorReady` [06-REQ-040b]. *(Replaces the prior `toggleOperatorMode` per 08-REVIEW-011 resolution.)*
 
 ```
-mutation toggleOperatorMode(args: {
+mutation setOperatorReady(args: {
   gameId: Id<"games">,
-  centaurTeamId: Id<"centaur_teams">,
-  mode: "centaur" | "automatic",
+  ready: boolean,
+  turn: number,
 }): void
 ```
 
-Authorization: caller must be the Captain of the CentaurTeam. The mutation verifies `centaur_teams.captainUserId === callerId`. Writes a `mode_toggled` action log entry transactionally.
+Authorization: caller must be a member of one of the CentaurTeams participating in the game (resolved via the game's participating-teams snapshot per [05-REQ-029]); the caller writes only their own `(gameId, operatorUserId = callerId)` record. The mutation looks up the caller's CentaurTeam in the game and stamps `centaurTeamId` on the row. Coaches and admins acting via implicit-coach permission ([05-REQ-066], [05-REQ-067]) shall be rejected per [08-REQ-064a]. The supplied `turn` is sanity-checked against the game's current turn (read from the game's STDB-replicated current-turn cursor or the latest seen turn snapshot in Convex); a stale `turn` shall be rejected. Upserts the `(gameId, operatorUserId)` row in `operator_ready_state` and writes an `operator_ready_toggled` action-log entry transactionally per [06-REQ-036].
 
 **Game-level parameter overrides** — `setGameParamOverrides`.
 
@@ -516,11 +537,10 @@ mutation setGameParamOverrides(args: {
   centaurTeamId: Id<"centaur_teams">,
   globalTemperature: number,
   automaticTimeAllocationMs: number,
-  turn0AutomaticTimeAllocationMs: number,
 }): void
 ```
 
-Patches the `game_centaur_state` document for the specified game and team. Authorization: caller must be a member of the CentaurTeam.
+Patches the `game_centaur_state` document for the specified game and team. Authorization: caller must be a member of the CentaurTeam. *(Amended per 08-REVIEW-011 resolution: `turn0AutomaticTimeAllocationMs` removed.)*
 
 #### 2.2.4 Computed Display State Mutations
 
@@ -608,7 +628,8 @@ Called by [05]'s game-start orchestration. This mutation:
 2. For each snake in `snakeIds`, creates a `snake_operator_state` document with `operatorUserId = null`, `manualMode = false`, `temperatureOverride = null`.
 3. For each snake, creates a `snake_bot_state` document with empty/default serialised fields.
 4. For each snake, creates `snake_heuristic_overrides` entries for all Preferences marked `activeByDefault = true` in the team's heuristic config, each with the default weight and `active = true`. No Drives are initialised ([06-REQ-014]).
-5. Creates a `game_centaur_state` document with all fields initialised from `global_centaur_params`: `operatorMode` from `defaultOperatorMode`, `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`, `turn0AutomaticTimeAllocationMs` from `defaultTurn0AutomaticTimeAllocationMs`.
+5. Creates a `game_centaur_state` document with all fields initialised from `global_centaur_params`: `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`. *(Amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed.)*
+6. No `operator_ready_state` rows are created at game-start — they are upserted lazily on the first `setOperatorReady` call from each operator per [06-REQ-040b]. *(Added per 08-REVIEW-011 resolution.)*
 
 Authorization: platform-level (called by Convex internal action during game-start orchestration).
 
@@ -662,7 +683,7 @@ All five writes (up to three `snake_operator_state` updates plus corresponding a
 
 Satisfies 06-REQ-033, 06-REQ-034, 06-REQ-036.
 
-The `action` field of `centaur_action_log` is a discriminated union with 10 event types (the informal spec's 11 types minus `move_staged`). Move staging is excluded from this log; staged moves are recorded in the SpacetimeDB append-only log where authoritativeness is guaranteed (see resolved 06-REVIEW-004).
+The `action` field of `centaur_action_log` is a discriminated union with 10 event types (the informal spec's 11 types minus `move_staged`, with `mode_toggled` replaced by `operator_ready_toggled` per 08-REVIEW-011). Move staging is excluded from this log; staged moves are recorded in the SpacetimeDB append-only log where authoritativeness is guaranteed (see resolved 06-REVIEW-004).
 
 ```typescript
 const centaurActionEvent = v.union(
@@ -684,8 +705,10 @@ const centaurActionEvent = v.union(
     oldActive: v.boolean(), newActive: v.boolean(),
   }),
   v.object({
-    type: v.literal("mode_toggled"),
-    mode: v.union(v.literal("centaur"), v.literal("automatic")),
+    type: v.literal("operator_ready_toggled"),
+    operatorUserId: v.id("users"),
+    turn: v.number(),
+    ready: v.boolean(),
   }),
   v.object({ type: v.literal("turn_submitted") }),
   v.object({
@@ -706,6 +729,8 @@ The `statemap_updated` event stores full snapshots (not deltas) per [06-REQ-028]
 
 The `turn_submitted` event records when the team's Captain submits the turn, which is distinct from SpacetimeDB's `declare_turn_over` — the Centaur action log records the operator-interface-level intent, not the STDB confirmation.
 
+The `operator_ready_toggled` event records each per-operator ready-state transition per [06-REQ-040b]. Replaying this event stream alongside the team's connection events allows the team-perspective replay viewer to reconstruct, at any scrubbed `t`, which operators were `ready` at that moment and therefore why the turn-over declaration of [08-REQ-062] either did or did not fire. *(Replaces the legacy `mode_toggled` event per 08-REVIEW-011 resolution.)*
+
 ---
 
 ### 2.5 Game-Start Initialization
@@ -724,7 +749,9 @@ The `initializeGameCentaurState` mutation (§2.2.6) is called by [05]'s game-sta
 
 4. **Seed per-snake heuristic overrides**: For each snake, for each Preference in the team's heuristic config that has `activeByDefault = true`, create a `snake_heuristic_overrides` document with `weight = defaultWeight` and `active = true`. No Drive overrides are created (Drives start inactive; [06-REQ-014]).
 
-5. **Seed game-scoped team state**: Create a `game_centaur_state` document with all fields copied from `global_centaur_params`: `operatorMode` from `defaultOperatorMode` (or `"automatic"` if no `global_centaur_params` exists), `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`, `turn0AutomaticTimeAllocationMs` from `defaultTurn0AutomaticTimeAllocationMs`.
+5. **Seed game-scoped team state**: Create a `game_centaur_state` document with all fields copied from `global_centaur_params`: `globalTemperature` from `defaultGlobalTemperature`, `automaticTimeAllocationMs` from `defaultAutomaticTimeAllocationMs`. *(Amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed.)*
+
+6. **Operator ready-state**: No `operator_ready_state` rows are seeded; they are upserted lazily on the first `setOperatorReady` call from each operator per [06-REQ-040b]. *(Added per 08-REVIEW-011 resolution.)*
 
 ---
 
@@ -775,8 +802,10 @@ const centaurActionEvent = v.union(
     oldActive: v.boolean(), newActive: v.boolean(),
   }),
   v.object({
-    type: v.literal("mode_toggled"),
-    mode: v.union(v.literal("centaur"), v.literal("automatic")),
+    type: v.literal("operator_ready_toggled"),
+    operatorUserId: v.id("users"),
+    turn: v.number(),
+    ready: v.boolean(),
   }),
   v.object({ type: v.literal("turn_submitted") }),
   v.object({
@@ -803,9 +832,7 @@ export default defineSchema({
   global_centaur_params: defineTable({
     centaurTeamId: v.id("centaur_teams"),
     defaultGlobalTemperature: v.number(),
-    defaultOperatorMode: v.union(v.literal("centaur"), v.literal("automatic")),
     defaultAutomaticTimeAllocationMs: v.number(),
-    defaultTurn0AutomaticTimeAllocationMs: v.number(),
     pinnedHeuristics: v.array(v.string()),
   }).index("by_team", ["centaurTeamId"]),
 
@@ -855,11 +882,21 @@ export default defineSchema({
   game_centaur_state: defineTable({
     gameId: v.id("games"),
     centaurTeamId: v.id("centaur_teams"),
-    operatorMode: v.union(v.literal("centaur"), v.literal("automatic")),
     globalTemperature: v.number(),
     automaticTimeAllocationMs: v.number(),
-    turn0AutomaticTimeAllocationMs: v.number(),
   }).index("by_game_team", ["gameId", "centaurTeamId"]),
+
+  operator_ready_state: defineTable({
+    gameId: v.id("games"),
+    centaurTeamId: v.id("centaur_teams"),
+    operatorUserId: v.id("users"),
+    ready: v.boolean(),
+    turn: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_game", ["gameId"])
+    .index("by_game_operator", ["gameId", "operatorUserId"])
+    .index("by_game_team", ["gameId", "centaurTeamId"]),
 
   centaur_action_log: defineTable({
     gameId: v.id("games"),
@@ -910,9 +947,7 @@ interface CentaurStateMutations {
   upsertGlobalCentaurParams(args: {
     centaurTeamId: Id<"centaur_teams">
     defaultGlobalTemperature: number
-    defaultOperatorMode: "centaur" | "automatic"
     defaultAutomaticTimeAllocationMs: number
-    defaultTurn0AutomaticTimeAllocationMs: number
     pinnedHeuristics: string[]
   }): void
 
@@ -962,18 +997,18 @@ interface CentaurStateMutations {
     temperature: number | null
   }): void
 
-  toggleOperatorMode(args: {
+  setOperatorReady(args: {
     gameId: Id<"games">
     centaurTeamId: Id<"centaur_teams">
-    mode: "centaur" | "automatic"
-  }): void
+    turn: number
+    ready: boolean
+  }): void   // Per [06-REQ-040b]; replaces toggleOperatorMode per 08-REVIEW-011 resolution.
 
   setGameParamOverrides(args: {
     gameId: Id<"games">
     centaurTeamId: Id<"centaur_teams">
     globalTemperature: number
     automaticTimeAllocationMs: number
-    turn0AutomaticTimeAllocationMs: number
   }): void
 
   updateSnakeBotState(args: {
@@ -1027,6 +1062,16 @@ interface CentaurStateQueries {
     fromTurn?: number
     toTurn?: number
   }): ReadonlyArray<CentaurActionLogDoc>
+
+  getOperatorReadyState(args: {
+    gameId: Id<"games">
+    centaurTeamId: Id<"centaur_teams">
+  }): ReadonlyArray<{
+    readonly operatorUserId: Id<"users">
+    readonly ready: boolean
+    readonly turn: number
+    readonly updatedAt: number
+  }>   // Per [06-REQ-040b]; added per 08-REVIEW-011 resolution.
 }
 ```
 
@@ -1044,14 +1089,18 @@ interface EffectiveHeuristicEntry {
 type EffectiveHeuristicConfig = ReadonlyArray<EffectiveHeuristicEntry>
 ```
 
-**`GameCentaurStateView`** — the joined view of all game-scoped state for the operator interface:
+**`GameCentaurStateView`** — the joined view of all game-scoped state for the operator interface. *(Amended per 08-REVIEW-011 resolution: `operatorMode` and `turn0AutomaticTimeAllocationMs` removed; `operatorReady` view added per [06-REQ-040b].)*
 
 ```typescript
 interface GameCentaurStateView {
-  readonly operatorMode: "centaur" | "automatic"
   readonly globalTemperature: number
   readonly automaticTimeAllocationMs: number
-  readonly turn0AutomaticTimeAllocationMs: number
+  readonly operatorReady: ReadonlyArray<{
+    readonly operatorUserId: Id<"users">
+    readonly ready: boolean
+    readonly turn: number
+    readonly updatedAt: number
+  }>
   readonly snakes: ReadonlyArray<{
     readonly snakeId: number
     readonly operatorUserId: Id<"users"> | null
@@ -1096,6 +1145,7 @@ interface GameCentaurStateInitContract {
     readonly snakeBotState: "one document per snake, empty state"
     readonly snakeHeuristicOverrides: "seeded from team heuristic_config activeByDefault entries"
     readonly gameCentaurState: "one document per team, all fields initialised from global_centaur_params defaults"
+    readonly operatorReadyState: "no rows seeded; upserted lazily on first setOperatorReady call per [06-REQ-040b]"
   }
 }
 ```
@@ -1108,7 +1158,7 @@ interface GameCentaurStateInitContract {
 
 2. **[07] must write computed display state via `updateSnakeBotState`.** The bot framework is the sole writer of `snake_bot_state` documents, authenticated via the per-CentaurTeam game credential. Each write is a full snapshot (not a delta) per [06-REQ-028]. The mutation transactionally writes a `statemap_updated` action log entry.
 
-3. **[08] must implement the operator mutation interface.** The live operator interface calls `selectSnake`, `deselectSnake`, `toggleManualMode`, `addDrive`, `removeDrive`, `setHeuristicOverride`, `setTemperatureOverride`, and `toggleOperatorMode` via the Convex client, authenticated via Google OAuth. Each mutation transactionally writes its corresponding action log entry — the client does not need to write log entries separately.
+3. **[08] must implement the operator mutation interface.** The live operator interface calls `selectSnake`, `deselectSnake`, `toggleManualMode`, `addDrive`, `removeDrive`, `setHeuristicOverride`, `setTemperatureOverride`, and `setOperatorReady` via the Convex client, authenticated via Google OAuth. Each mutation transactionally writes its corresponding action log entry — the client does not need to write log entries separately. *(Amended per 08-REVIEW-011 resolution: `toggleOperatorMode` replaced by `setOperatorReady` per [06-REQ-040b].)*
 
 4. **[08] must subscribe to `getGameCentaurState` for live updates.** The Convex reactive query system delivers updates when any underlying document changes (operator state, bot state, drives, overrides, or game-level state).
 
@@ -1116,7 +1166,7 @@ interface GameCentaurStateInitContract {
 
 6. **[05] must coordinate game-start initialization.** [05] calls `initializeGameCentaurState` for each CentaurTeam participating in a game, passing the team's snake IDs. [05] also calls `cleanupGameCentaurState` at game end.
 
-7. **Single Convex namespace coordination.** Module 06's table names (`heuristic_config`, `global_centaur_params`, `snake_operator_state`, `snake_bot_state`, `snake_drives`, `snake_heuristic_overrides`, `game_centaur_state`, `centaur_action_log`) must not collide with Module 05's table names. `global_centaur_params` stores team-level defaults; `game_centaur_state` is initialised from those defaults at game start and holds the effective values for each game. Per [02] §3.11 DOWNSTREAM IMPACT note 1, [05] should load [06]'s exported interfaces when authoring its schema.
+7. **Single Convex namespace coordination.** Module 06's table names (`heuristic_config`, `global_centaur_params`, `snake_operator_state`, `snake_bot_state`, `snake_drives`, `snake_heuristic_overrides`, `game_centaur_state`, `operator_ready_state`, `centaur_action_log`) must not collide with Module 05's table names. `global_centaur_params` stores team-level defaults; `game_centaur_state` is initialised from those defaults at game start and holds the effective values for each game. Per [02] §3.11 DOWNSTREAM IMPACT note 1, [05] should load [06]'s exported interfaces when authoring its schema.
 
 ---
 
