@@ -12,7 +12,7 @@
 
 **02-REQ-004**: SpacetimeDB instances shall be isolated from one another. No SpacetimeDB instance shall have read or write access to the state of any other SpacetimeDB instance.
 
-**02-REQ-005**: A Centaur Team's captain shall nominate a Snek Centaur Server domain in the Centaur Team's platform configuration. No acceptance from the server is required — the captain unilaterally declares trust. A Centaur Team may change its nominated server domain at any time, subject to the existing mid-game freeze on team parameters (no changes while the team is participating in a game with `status = "playing"`).
+**02-REQ-005**: A Centaur Team's captain shall nominate a Snek Centaur Server domain in the Centaur Team's platform configuration. No acceptance from the server is required — the captain unilaterally declares trust. A Centaur Team may change its nominated server domain at any time, subject to the mid-game freeze on team parameters (no changes while the team is participating in a game with `status = "playing"`).
 
 **02-REQ-006**: Every Centaur Team that joins a game shall have a nominated Snek Centaur Server domain. The platform shall not support pure-human teams.
 
@@ -138,7 +138,7 @@
 
 ### 2.9 Unified Snek Centaur Server Web Application
 
-**02-REQ-058**: The Snek Centaur Server web application shall be the single web application for all platform interactions. There is no separate Game Platform Server or Game Platform Client. Every Snek Centaur Server serves the same web application, backed by the same Convex backend, and a user sees the same platform data regardless of which server they visit (subject to the read-access principle in [03]).
+**02-REQ-058**: The Snek Centaur Server web application shall be the single web application for all platform interactions. Every Snek Centaur Server serves the same web application, backed by the same Convex backend, and a user sees the same platform data regardless of which server they visit (subject to the read-access principle in [03]).
 
 **02-REQ-059**: The Snek Centaur Server web application scope shall include both platform-level concerns (home and navigation, Centaur Team management, room browsing and creation, room lobbies and game configuration, live spectating, replay viewing, player profiles, team profiles, leaderboards) and team-internal competitive concerns (heuristic configuration, bot parameter configuration, live operator interface, team-perspective replay viewing with sub-turn timeline resolution). (Detailed feature requirements are owned by [08].)
 
@@ -233,7 +233,7 @@ The platform is composed of exactly three runtime kinds, each with a distinct li
 
 Satisfies 02-REQ-007 through 02-REQ-014.
 
-**Authoritative turn resolution** (02-REQ-007, 02-REQ-008). The SpacetimeDB module imports the shared engine codebase ([02-REQ-035]) and invokes `resolveTurn()` (from Module 01's exported interface, Section 3.8) inside a `resolve_turn` reducer. Because SpacetimeDB reducers execute as single ACID transactions, the entire eleven-phase pipeline either completes and commits or is rolled back entirely. No other runtime calls `resolveTurn()` authoritatively — the Snek Centaur Server library uses it for simulation only (02-REQ-036), and web clients use it for pre-validation and rendering only (02-REQ-037). The SpacetimeDB module does **not** call `generateBoardAndInitialState()` — board generation is performed by Convex before the STDB instance is provisioned (see §2.14).
+**Authoritative turn resolution** (02-REQ-007, 02-REQ-008). The SpacetimeDB module imports the shared engine codebase ([02-REQ-035]) and invokes `resolveTurn()` (from Module 01's exported interface, Section 3.8) inside a `resolve_turn` reducer. Because SpacetimeDB reducers execute as single ACID transactions, the entire eleven-phase pipeline either completes and commits or is rolled back entirely. No other runtime calls `resolveTurn()` authoritatively — the Snek Centaur Server library uses it for simulation only (02-REQ-036), and web clients use it for pre-validation and rendering only (02-REQ-037). Board generation is performed by Convex before the STDB instance is provisioned (see §2.14).
 
 **Real-time synchronization** (02-REQ-009). SpacetimeDB provides automatic real-time state synchronization to connected clients via subscription queries. When a reducer commits new rows (e.g., new `snake_states` entries after turn resolution), all subscribers whose subscription queries match the new data receive updates without polling. This is a platform-provided capability of SpacetimeDB, not custom application code.
 
@@ -392,12 +392,12 @@ Satisfies 02-REQ-030, 02-REQ-032, 02-REQ-032a, 02-REQ-034.
 
 - The **shared game engine** package (e.g., `@snek-centaur/engine`) — domain types and turn-resolution logic consumed by all runtimes (02-REQ-034).
 - The **Snek Centaur Server library** package (e.g., `@snek-centaur/server-lib`) — bot framework, game invitation handler, healthcheck, Convex bindings, multi-tenant runtime, and data-layer APIs (02-REQ-030).
-- The **shared heuristics package** `@team-snek/heuristics` — the canonical heuristic registry plus Drive/Preference implementations, depended on by both the Snek Centaur Server library and the [08] SvelteKit web application. Depends only on `@team-snek/bot-framework`'s `Drive` / `Preference` / `HeuristicRegistration` types. *(Added per [07] 07-REVIEW-015 resolution; see [07] §2.3.)*
+- The **shared heuristics package** `@team-snek/heuristics` — the canonical heuristic registry plus Drive/Preference implementations, depended on by both the Snek Centaur Server library and the [08] SvelteKit web application. Depends only on `@team-snek/bot-framework`'s `Drive` / `Preference` / `HeuristicRegistration` types. (See [07] 07-REVIEW-015; [07] §2.3.)
 - Platform infrastructure code (Convex functions, SpacetimeDB modules) that is not published as npm packages.
 
 Both the shared engine and the Snek Centaur Server library are published to npm from this monorepo. The shared heuristics package is also published to npm (so forked web-app repositories can depend on it directly without inheriting server internals).
 
-**Package-graph note for `@team-snek/heuristics`.** The dependency edges induced by the shared heuristics package are: `@team-snek/heuristics` → `@team-snek/bot-framework` (types only); Snek Centaur Server library → `@team-snek/heuristics`; web app → `@team-snek/heuristics`. There is no edge from the web app to the Snek Centaur Server library induced by heuristic content, and no edge from `@team-snek/heuristics` back into either runtime. Heuristic-source edits rebuild a single workspace package and trigger downstream rebuilds of both runtimes uniformly. *(Per [07] 07-REVIEW-015 resolution.)*
+**Package-graph note for `@team-snek/heuristics`.** The dependency edges induced by the shared heuristics package are: `@team-snek/heuristics` → `@team-snek/bot-framework` (types only); Snek Centaur Server library → `@team-snek/heuristics`; web app → `@team-snek/heuristics`. The web app does not depend on the Snek Centaur Server library through heuristic content, and `@team-snek/heuristics` does not depend on either runtime. Heuristic-source edits rebuild a single workspace package and trigger downstream rebuilds of both runtimes uniformly. (See [07] 07-REVIEW-015.)
 
 **Reference implementation repository.** A separate repository (e.g., `snek-centaur-server`) contains:
 
@@ -417,7 +417,7 @@ Satisfies 02-REQ-035.
 
 The SpacetimeDB game module ([04]) is authored as TypeScript source within the platform monorepo. It imports the shared engine codebase (`@snek-centaur/engine`) for domain types and `resolveTurn()`, and uses SpacetimeDB's TypeScript module SDK for table definitions, reducer declarations, and lifecycle callbacks.
 
-**WASM compilation.** The module is compiled to a WebAssembly binary using SpacetimeDB's build toolchain (e.g., `spacetime build`). The WASM binary encapsulates the complete game engine module: all table schemas, all reducers, all lifecycle callbacks, and the embedded shared engine codebase. The resulting binary is the sole deployment artifact for game instance provisioning — there is no separate "deploy module" step after instance creation.
+**WASM compilation.** The module is compiled to a WebAssembly binary using SpacetimeDB's build toolchain (e.g., `spacetime build`). The WASM binary encapsulates the complete game engine module: all table schemas, all reducers, all lifecycle callbacks, and the embedded shared engine codebase. The resulting binary is the sole deployment artifact for game instance provisioning.
 
 **Build pipeline.** The platform build pipeline (used in both development and production) performs the following steps:
 
@@ -461,8 +461,6 @@ export {
 - Use the specified BLAKE3 implementation for `subSeed()` (per Module 01 DOWNSTREAM IMPACT note 4), which must be available as a dependency in all three environments.
 - Use the flat `ReadonlyArray<CellType>` board encoding with `y * width + x` indexing (per Module 01 DOWNSTREAM IMPACT note 3).
 
-**Rationale for single codebase vs. separate implementations**. A single codebase eliminates the class of bugs where the authoritative server and simulation clients disagree on game rules. Given that SpacetimeDB's TypeScript module support runs standard ECMAScript, there is no technical barrier to sharing. The alternative — separate implementations in each consumer — would require continuous parity testing and triple the maintenance surface for any rule change.
-
 ### 2.18 Human Client Topology Design
 
 Satisfies 02-REQ-038 through 02-REQ-041.
@@ -504,7 +502,7 @@ The SpacetimeDB connection uses a spectator access token ([03]) — an RS256-sig
 
 Satisfies 02-REQ-058, 02-REQ-059, 02-REQ-043, 02-REQ-060, 02-REQ-061, 02-REQ-062, 02-REQ-063, 02-REQ-064, 02-REQ-065.
 
-**Single unified application**. There is no separate Game Platform Server or Game Platform Client. Every Snek Centaur Server serves the same unified web application built with Svelte 5 and shadcn-svelte. The application covers:
+**Single unified application**. Every Snek Centaur Server serves the same unified web application built with Svelte 5 and shadcn-svelte. The application covers:
 
 | Scope | Pages |
 |-------|-------|
@@ -619,9 +617,9 @@ export interface CentaurTeamMembershipRecord {
 }
 ```
 
-`Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps — as opposed to board generation parameters. `CentaurTeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase; STDB does not call that function.
+`Board`, `SnakeState`, and `ItemState` are re-exported from Module 01 (Section 3.2). `DynamicGameplayParams` is the subset of `GameConfig` (Module 01 Section 3.3) that affects runtime gameplay behaviour — food spawn rate, potion spawn rates, hazard damage, max health, timer budgets, max turns, turn caps. `CentaurTeamId` is re-exported from Module 01 (Section 3.1). The pre-computed initial state is produced by Convex running `generateBoardAndInitialState()` from the shared engine codebase.
 
-**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters, game seed, game-end callback URL, and the game-outcome callback token (a Convex-signed JWT for authenticating the game-end notification POST back to Convex) — not the full `GameConfig` and not a game seed for generation purposes (the seed is forwarded for turn-resolution randomness and replay export, not for board generation). [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, retrieving the pre-compiled WASM binary from Convex file storage and including it in the `POST /v1/database` provisioning request, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [05] must store the current WASM module binary in Convex file storage, uploaded by the platform build pipeline at build/deploy time. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
+**DOWNSTREAM IMPACT**: [04] must implement the `initialize_game` reducer to accept a pre-computed initial game state (board, snakes, items) plus dynamic gameplay parameters, the game seed (used by STDB for turn-resolution randomness and replay export), game-end callback URL, and the game-outcome callback token (a Convex-signed JWT for authenticating the game-end notification POST back to Convex). [05] must implement the provisioning orchestration that supplies them, including running `generateBoardAndInitialState()` within a Convex mutation, retrieving the pre-compiled WASM binary from Convex file storage and including it in the `POST /v1/database` provisioning request, the game-start invitation flow to nominated servers, and the HTTP action that calls the STDB init reducer. [05] must store the current WASM module binary in Convex file storage, uploaded by the platform build pipeline at build/deploy time. [03] must define the game credential generation and the SpacetimeDB access token format validated via OIDC.
 
 ### 3.5 Shared Engine Codebase Contract
 
@@ -807,7 +805,7 @@ export interface ServerNominationModel {
 }
 ```
 
-**DOWNSTREAM IMPACT**: [03] must define the game-start invitation flow that delivers per-team game credentials to nominated server domains. [05] must store `nominatedServerDomain` as a field on the Centaur Team record (not a separate server registry table). The `centaur_servers` table is eliminated — server identity is not a platform concept.
+**DOWNSTREAM IMPACT**: [03] must define the game-start invitation flow that delivers per-team game credentials to nominated server domains. [05] must store `nominatedServerDomain` as a field on the Centaur Team record. Server identity is not a platform concept and there is no platform-level server registry.
 
 ### 3.10 Unified Web Application Boundary
 
@@ -858,7 +856,7 @@ export interface UnifiedWebApplicationScope {
 
 10. **Snek Centaur Server holds no persistent credentials.** Outside active games, a Snek Centaur Server has no Convex credentials, no SpacetimeDB connections, and no active subscriptions (02-REQ-055). Game credentials are ephemeral, per-team, per-game, and expire when the game ends (02-REQ-057). Modules [03] and [05] must design credential issuance accordingly.
 
-11. **No separate server registry table.** The `centaur_servers` table is eliminated. Server identity is not a platform concept. A Centaur Team's nominated server is stored as a string field (`nominatedServerDomain`) on the Centaur Team record. Module [05] must reflect this in its schema.
+11. **No separate server registry table.** Server identity is not a platform concept. A Centaur Team's nominated server is stored as a string field (`nominatedServerDomain`) on the Centaur Team record. Module [05] must reflect this in its schema.
 
 ## REVIEW Items
 
