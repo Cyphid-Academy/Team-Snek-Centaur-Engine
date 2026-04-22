@@ -84,10 +84,10 @@ Progress on the modular spec (see `SPEC-INSTRUCTIONS.md` for the phase/module fr
 - **Module 01 — game-rules**: Phase 2 complete. 0 REVIEW items open.
 - **Module 02 — platform-architecture**: Phase 2 complete. 2 REVIEW items open (006, 007).
 - **Module 03 — auth-and-identity**: Phase 2 complete. 1 REVIEW item open (011).
-- **Module 04 — stdb-engine**: Phase 2 complete (including no-journey-narration sweep). 2 REVIEW items open (018, 020).
-- **Module 05 — convex-platform**: Phase 2 complete. 0 REVIEW items open. (Spec body vs REVIEW items sweep applied.)
-- **Module 06 — centaur-state**: Phase 2 complete. 0 REVIEW items open. (Spec body vs REVIEW items sweep applied.)
-- **Module 07 — bot-framework**: Phase 2 complete. 0 REVIEW items open. (Spec body vs REVIEW items sweep applied.)
+- **Module 04 — stdb-engine**: Phase 2 complete. 2 REVIEW items open (018, 020).
+- **Module 05 — convex-platform**: Phase 2 complete. 0 REVIEW items open.
+- **Module 06 — centaur-state**: Phase 2 complete. 0 REVIEW items open.
+- **Module 07 — bot-framework**: Phase 2 complete. 0 REVIEW items open.
 - **Module 08 — centaur-server-app**: Phase 2 complete. 2 REVIEW items open (022, 023).
 - **Module 09 — platform-ui**: Phase 1 (Requirements) drafted. (Module absorbed into Module 08; retained as a redirect stub.)
 
