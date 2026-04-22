@@ -16,7 +16,7 @@
 
 **03-REQ-006** *(negative)*: The platform shall not support anonymous or unauthenticated participants in any role that stages moves, modifies game state, or modifies Centaur subsystem state.
 
-**03-REQ-049** *(negative)*: "Centaur Server identity" is eliminated as a platform identity type. Snek Centaur Servers have no persistent identity on the platform. A server domain is a string field on a Centaur Team record, not an identity. A Snek Centaur Server receives credentials only when invited to host a game, and those credentials are scoped to a Centaur Team and a game, not to the server itself.
+**03-REQ-049** *(negative)*: Snek Centaur Servers shall have no persistent identity on the platform. A server domain is a configuration field on a Centaur Team record (per 03-REQ-003), not an identity. A Snek Centaur Server shall receive credentials only when invited to host a game, and those credentials shall be scoped to a Centaur Team and a game, not to the server itself.
 
 ---
 
@@ -123,7 +123,7 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 **03-REQ-026a**: **Coach access tokens** shall be issuable by the Convex runtime to any authenticated human identity for which `isCoachOfTeam(callerUserId, centaurTeamId)` per [05-REQ-067] returns true on a participating team of an in-progress game. Coach access tokens shall carry the coach role via `sub: "coach:{coachUserId}:{centaurTeamId}"`, shall carry the bound team binding for the purpose of read-side row-level filtering ([04-REQ-019]), and shall confer no move-staging or other mutating privilege. They shall otherwise share the token format defined in 03-REQ-020. Issuance of coach tokens is owned by [05] §3.4 (`issueCoachAccessToken`).
 
-**03-REQ-027**: SpacetimeDB access tokens for all roles (operator participant, bot participant, spectator) shall have a lifetime of **2 hours** from issuance. A token holder shall be able to obtain a replacement token before expiry without re-authenticating with Google OAuth (for operators) or re-obtaining a game credential (for bot participants), provided the underlying identity's credential is still valid. Because access tokens are validated only at connection time ([03-REQ-021]), the 2-hour lifetime governs the window within which a token can be used to establish or re-establish a connection — including reconnection after a network interruption during a game — and does not bound the lifetime of an already-connected client. The primary security boundary against post-game token use is the ephemeral SpacetimeDB instance's teardown ([02-REQ-021]) — once the instance is torn down, the token has nothing to authenticate against. Token expiry is a defense-in-depth measure against use of a leaked token during a long-running game, not the mechanism that ends access after a game. (See resolved 03-REVIEW-004.)
+**03-REQ-027**: SpacetimeDB access tokens for all roles (operator participant, bot participant, spectator) shall have a lifetime of **2 hours** from issuance. A token holder shall be able to obtain a replacement token before expiry without re-authenticating with Google OAuth (for operators) or re-obtaining a game credential (for bot participants), provided the underlying identity's credential is still valid. Because access tokens are validated only at connection time ([03-REQ-021]), the 2-hour lifetime governs the window within which a token can be used to establish or re-establish a connection — including reconnection after a network interruption during a game — and does not bound the lifetime of an already-connected client. The primary security boundary against post-game token use is the ephemeral SpacetimeDB instance's teardown ([02-REQ-021]) — once the instance is torn down, the token has nothing to authenticate against. Token expiry is a defense-in-depth measure against use of a leaked token during a long-running game. (See resolved 03-REVIEW-004.)
 
 ---
 
@@ -137,21 +137,21 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 **03-REQ-031**: The SpacetimeDB game instance shall subject every admitted connection — including bot participants, human participants, and spectators — to the invisibility filter of [02-REQ-010] whenever the connection does not belong to the snake's owning team. Spectator connections shall be filtered on the same terms as opponent connections.
 
-**03-REQ-032**: Each staged move recorded in the game's turn log (per [04], informal spec Section 14) shall carry a `stagedBy` attribution. Within the SpacetimeDB game instance, `stagedBy` shall hold an `Agent` value (as defined by [01]: `{kind: 'centaur_team', centaurTeamId}` for Centaur Server connections, or `{kind: 'operator', operatorUserId}` for operator-authenticated connections) — resolved from the connecting client's JWT `sub` claim at `client_connected` time per [04-REQ-020], not at turn-resolution or replay-export time. SpacetimeDB turn-resolution logic shall not perform any further interpretation of or branching on the `Agent` value, consistent with [02-REQ-030]. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
+**03-REQ-032**: Each staged move recorded in the game's turn log (per [04], informal spec Section 14) shall carry a `stagedBy` attribution. Within the SpacetimeDB game instance, `stagedBy` shall hold an `Agent` value (as defined by [01]: `{kind: 'centaur_team', centaurTeamId}` for Centaur Server connections, or `{kind: 'operator', operatorUserId}` for operator-authenticated connections), resolved from the connecting client's JWT `sub` claim at `client_connected` time per [04-REQ-020]. SpacetimeDB turn-resolution logic shall not perform any further interpretation of or branching on the `Agent` value, consistent with [02-REQ-030]. (See resolved 03-REVIEW-005 and 04-REVIEW-011.)
 
-**03-REQ-044**: The SpacetimeDB game instance shall, at the time of each `client_connected` callback, resolve the connecting client's JWT `sub` claim to an `Agent` value (bot connections with `sub: "centaur:{centaurTeamId}"` yield `{kind: 'centaur_team', centaurTeamId}`; operator connections with `sub: "operator:{operatorUserId}"` yield `{kind: 'operator', operatorUserId}`). Coach connections with `sub: "coach:{coachUserId}:{centaurTeamId}"` are bound to the named team for read-side row-level filtering ([04-REQ-019]) but yield no `Agent` value (coach connections do not stage moves). This resolved `Agent` shall be stored in the participant attribution record per [04-REQ-020] and used immediately as the `stagedBy` value for any moves staged by that connection. The participant attribution record shall be retained for the full duration of the game — including for connections that have since been closed or replaced by reconnection — so that historical `stagedBy: Agent` values remain consistent. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
+**03-REQ-044**: The SpacetimeDB game instance shall, at the time of each `client_connected` callback, resolve the connecting client's JWT `sub` claim to an `Agent` value (bot connections with `sub: "centaur:{centaurTeamId}"` yield `{kind: 'centaur_team', centaurTeamId}`; operator connections with `sub: "operator:{operatorUserId}"` yield `{kind: 'operator', operatorUserId}`). Coach connections with `sub: "coach:{coachUserId}:{centaurTeamId}"` are bound to the named team for read-side row-level filtering ([04-REQ-019]) but yield no `Agent` value (coach connections do not stage moves). This resolved `Agent` shall be stored in the participant attribution record per [04-REQ-020] and used immediately as the `stagedBy` value for any moves staged by that connection. The participant attribution record shall be retained for the full duration of the game — including for connections that have since been closed or replaced by reconnection — so that historical `stagedBy: Agent` values remain consistent. (See resolved 03-REVIEW-005 and 04-REVIEW-011.)
 
-**03-REQ-045**: When Convex persists the game record from the SpacetimeDB game instance at game end (per [02-REQ-022]), `stagedBy` fields in the serialized record already carry `Agent` values (resolved at registration time per [03-REQ-044] and [04-REQ-020]); no additional Identity→email/team-reference resolution step is required during serialization. The persisted game record shall not contain raw SpacetimeDB Identities in any `stagedBy` field — this invariant is upheld by the registration-time resolution, not by a serialization-time mapping pass. (See resolved 03-REVIEW-005; updated per 04-REVIEW-011 resolution.)
+**03-REQ-045**: When Convex persists the game record from the SpacetimeDB game instance at game end (per [02-REQ-022]), `stagedBy` fields in the serialized record already carry `Agent` values (resolved at connection time per [03-REQ-044] and [04-REQ-020]); no Identity-to-Agent resolution step occurs during serialization. The persisted game record shall not contain raw SpacetimeDB Identities in any `stagedBy` field. (See resolved 03-REVIEW-005 and 04-REVIEW-011.)
 
 ---
 
 ### 3.9 Platform HTTP API Authorization
 
-**03-REQ-033**: The platform's HTTP API ([05], informal spec Section 12) shall authorize each request by a bearer API key presented in the request's authorization header. API keys shall be created by admin users only (per [05-REQ-045]) via the Snek Centaur Server web application and shall be revocable. *(Amended per 05-REVIEW-004 resolution: creation restricted to admin users.)*
+**03-REQ-033**: The platform's HTTP API ([05], informal spec Section 12) shall authorize each request by a bearer API key presented in the request's authorization header. API keys shall be created by admin users only (per [05-REQ-045]) via the Snek Centaur Server web application and shall be revocable. (See resolved 05-REVIEW-004.)
 
 **03-REQ-034**: API keys shall be stored by the platform only in a form from which the original key cannot be recovered (e.g., as a one-way hash). The plaintext of a newly created API key shall be shown to its creator exactly once, at creation time.
 
-**03-REQ-035**: Each API key shall be bound to the human identity that created it (who must be an admin per [03-REQ-033]). Because API keys are restricted to admin users, the authorization scope of every valid API key is global (admin-level). No per-user scope bounding or live scope resolution is required. *(Amended per 05-REVIEW-004 resolution: admin-only keys have inherently global scope, replacing the original per-user scope-bounding mechanism.)*
+**03-REQ-035**: Each API key shall be bound to the human identity that created it (who must be an admin per [03-REQ-033]). Because API keys are restricted to admin users, the authorization scope of every valid API key is global (admin-level). (See resolved 05-REVIEW-004.)
 
 **03-REQ-036** *(negative)*: API keys shall not authorize the creation of new human identities, and shall not authorize any action that requires Google OAuth interaction.
 
@@ -175,7 +175,7 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 **03-REQ-040**: The platform shall maintain signing material for per-Centaur-Team game credentials. The mechanism must allow Convex to generate and validate these credentials without requiring external key infrastructure during game-time writes.
 
-**03-REQ-041**: The platform shall maintain separate signing material for per-Centaur-Team game credentials (Ed25519, used for Convex Auth) and for SpacetimeDB access tokens (RS256, used for OIDC-based SpacetimeDB authentication). Compromise of one signing key shall not compromise the other. (See REVIEW-007.)
+**03-REQ-041**: The platform shall maintain separate signing material for per-Centaur-Team game credentials (Ed25519, used for Convex Auth) and for SpacetimeDB access tokens (RS256, used for OIDC-based SpacetimeDB authentication). Compromise of one signing key shall not compromise the other. (See resolved 03-REVIEW-007.)
 
 **03-REQ-043** *(negative)*: Credential or key material shall not be transmitted over unauthenticated channels to any party other than its intended holder. The RS256 private key for signing SpacetimeDB access tokens shall never be transmitted outside the Convex runtime — only the public key is exposed via the OIDC JWKS endpoint. Per-Centaur-Team game credentials shall be transmitted only via the game invitation POST to the nominated server domain.
 
@@ -183,7 +183,7 @@ This makes Convex a standards-compliant OIDC issuer. The RSA key pair is platfor
 
 ### 3.12 Convex Access to the SpacetimeDB Runtime
 
-**03-REQ-048**: The Convex platform runtime shall be able to authenticate itself to the self-hosted SpacetimeDB platform for the purpose of provisioning and tearing down per-game instances ([02-REQ-020], [02-REQ-021]), and shall be able to authenticate itself to each provisioned SpacetimeDB game instance for the purpose of invoking privileged operations on that instance. The privileged operations that require such authentication include, at minimum: initialisation of the game at game start ([04-REQ-013]), registration of Convex as a subscriber to the instance's game-end notification mechanism ([04-REQ-061a]), and retrieval of the complete historical record at game end ([04-REQ-061]). Convex does not hold a live gameplay subscription to any SpacetimeDB game instance; live gameplay reads during play are performed by web clients directly ([02]) and do not require a Convex-held credential. Authentication shall be via a Convex self-issued JWT presented to the self-hosted SpacetimeDB management API — see Section 3.22 for the concrete mechanism, including rationale for self-hosting (Australian hosting locality, cost minimization, automation-friendly auth).
+**03-REQ-048**: The Convex platform runtime shall be able to authenticate itself to the self-hosted SpacetimeDB platform for the purpose of provisioning and tearing down per-game instances ([02-REQ-020], [02-REQ-021]), and shall be able to authenticate itself to each provisioned SpacetimeDB game instance for the purpose of invoking privileged operations on that instance. The privileged operations that require such authentication include, at minimum: initialisation of the game at game start ([04-REQ-013]), registration of Convex as a subscriber to the instance's game-end notification mechanism ([04-REQ-061a]), and retrieval of the complete historical record at game end ([04-REQ-061]). Convex does not hold a live gameplay subscription to any SpacetimeDB game instance; live gameplay reads during play are performed by web clients directly ([02]) and do not require a Convex-held credential. Authentication shall be via a Convex self-issued JWT presented to the self-hosted SpacetimeDB management API — see Section 3.22 for the concrete mechanism.
 
 ---
 
@@ -268,7 +268,7 @@ Satisfies 03-REQ-057, 03-REQ-058, 03-REQ-059, 03-REQ-016, 03-REQ-017, 03-REQ-040
 
 This is the most architecturally significant design decision in the module. The per-Centaur-Team game credential must allow a Snek Centaur Server to authenticate to Convex on behalf of a specific Centaur Team for a specific game.
 
-**Format: JWT with Ed25519 signature**. The credential is a standard JSON Web Token (JWT) signed with the Ed25519 algorithm (EdDSA). Ed25519 is chosen over RSA for compact signatures (64 bytes vs 256+ bytes) and fast verification, and over HMAC because asymmetric signing enables Convex Auth's `customJwt` provider to validate the token using only the public key without exposing the signing key to the validation path.
+**Format: JWT with Ed25519 signature**. The credential is a standard JSON Web Token (JWT) signed with the Ed25519 algorithm (EdDSA). Ed25519 produces compact 64-byte signatures, supports fast verification, and is asymmetric — Convex Auth's `customJwt` provider validates tokens using only the public key, with the signing key kept off the validation path.
 
 **Key management**. Convex holds an Ed25519 key pair:
 - The private key is stored as a Convex environment variable (`GAME_CREDENTIAL_SIGNING_KEY`), base64-encoded.
@@ -293,7 +293,7 @@ interface GameCredentialClaims {
 - `centaurTeamId`: The Convex document ID of the Centaur Team (as a string). This value IS the `centaurTeamId` used in `Agent` values (`{kind: 'centaur_team', centaurTeamId}`) — the JWT claim and the `Agent` field are the same Convex `_id`.
 - `gameId`: The Convex document ID of the game (as a string).
 - `iat`: Issuance timestamp (Unix seconds).
-- `exp`: Expiry timestamp. Set to `iat + 7200` (2 hours). The JWT `exp` claim is **not the primary expiry mechanism**. The primary mechanism is Convex checking `game.status === 'playing'` on every request authenticated by this credential — a request against a finished or not-started game is rejected regardless of JWT validity. The 2-hour lifetime is far longer than any game will last and offers sufficient buffer to avoid re-issuing tokens during a game. The primary enforcement of the credential's temporal scope is STDB instance teardown and Convex game-status checks (`game.status === 'playing'`), not JWT expiry. The `exp` claim serves as defense-in-depth: if the credential is leaked, the 2-hour window bounds the exposure. The game credential's effective lifetime is bounded to the game per 03-REQ-058 — it becomes useless (rejected by Convex) as soon as the game transitions out of `playing` status, regardless of the JWT's `exp` timestamp. *(Amended per 05-REVIEW-012 resolution: reduced from 7 days to 2 hours.)*
+- `exp`: Expiry timestamp. Set to `iat + 7200` (2 hours). The credential's primary temporal scoping comes from Convex checking `game.status === 'playing'` on every request — a request against a finished or not-started game is rejected regardless of JWT validity — and from STDB instance teardown at game end. The 2-hour `exp` is defense-in-depth, bounding leak exposure to a 2-hour window. (See resolved 05-REVIEW-012.)
 
 **Convex Auth integration**. The Convex Auth configuration includes a `customJwt` provider named `"gameCredential"`. When a Snek Centaur Server presents the JWT as a bearer token via the Convex client, Convex Auth validates the signature against the configured public key and makes the claims available via `auth.getUserIdentity()`. The `resolveIdentity` helper (Section 3.13) detects game credentials by the presence of the `centaurTeamId` claim.
 
@@ -308,12 +308,7 @@ These checks are implemented as a shared authorization helper used by every Conv
 
 **Identity resolution** (03-REQ-017). When Convex function code receives a request authenticated by a game credential, `resolveIdentity()` returns `{kind: 'centaur_team_credential', centaurTeamId, gameId}`. This is structurally distinct from human identities, so no code path is obligated to handle an ambiguous identity kind.
 
-**Rationale for JWT over alternatives**:
-- *JWT vs opaque token with server-side lookup*: JWT embeds the claims in the token itself, so Convex Auth can validate it without a database lookup on the hot path. Opaque tokens would require a table scan per request.
-- *Ed25519 vs HMAC*: Convex Auth's `customJwt` provider is designed for asymmetric verification. Using HMAC would require a different integration path and would mean the validation key is the same as the signing key, reducing defense-in-depth.
-- *Ed25519 vs RS256*: Ed25519 produces smaller signatures (64 vs 256 bytes) and is faster to verify. Both are supported by standard JWT libraries.
-
-**Independence of compromise** (03-REQ-041). The game credential signing key (Ed25519 private key, used for Convex Auth) is entirely separate from the SpacetimeDB access token signing key (RS256 private key, used for OIDC-based SpacetimeDB authentication). Compromise of the Ed25519 key does not reveal the RS256 key, and vice versa. Both keys are stored as Convex environment variables but serve distinct authentication boundaries: Ed25519 for Snek Centaur Server → Convex, RS256 for all clients → SpacetimeDB.
+**Independence of compromise** (03-REQ-041). The game credential signing key (Ed25519 private key, used for Convex Auth) is entirely separate from the SpacetimeDB access token signing key (RS256 private key, used for OIDC-based SpacetimeDB authentication). Compromise of one key does not compromise the other. Both keys are stored as Convex environment variables but serve distinct authentication boundaries: Ed25519 for Snek Centaur Server → Convex, RS256 for all clients → SpacetimeDB.
 
 ---
 
@@ -351,7 +346,7 @@ interface GameInvitationPayload {
 - `gameConfig`: The frozen game configuration, so the server can configure its bot framework without querying Convex.
 - `centaurTeamRoster`: The roster snapshot for this team, so the server knows which humans are authorized. Each `operatorUserId` is the Convex `_id` of the operator's `users` record (a string), included so the server can correlate roster entries with `Agent` values in game events.
 
-**No shared secret at nomination** (03-REQ-012). The invitation payload contains the game credential — this is the first time the server receives any secret from the platform for this game. No secret is exchanged during server nomination.
+**Game credential delivered only via invitation** (03-REQ-012). The invitation payload carries the game credential; no secret is exchanged with the Snek Centaur Server outside an active invitation.
 
 **Accept/reject response contract** (03-REQ-054, 03-REQ-055):
 
@@ -371,15 +366,13 @@ The server responds with HTTP 200 and a JSON body. If `accepted` is `true`, the 
 
 Convex sends invitations to all participating servers concurrently (not sequentially) to minimize total latency. If any invitation fails, all are considered failed and the game does not start.
 
-**Rationale for 30-second timeout**: The invitation POST is a lightweight HTTP request to a server that should be running and healthy (per the healthcheck mechanism of [02-REQ-029]). 30 seconds is generous enough to accommodate cold-start delays on serverless platforms or slow DNS resolution, while short enough that users waiting in the lobby are not left hanging indefinitely.
-
 ---
 
 ### 3.17 SpacetimeDB Connection Authentication via Convex-as-OIDC-Issuer
 
 Satisfies 03-REQ-019, 03-REQ-020, 03-REQ-021, 03-REQ-022, 03-REQ-023, 03-REQ-024, 03-REQ-025, 03-REQ-026, 03-REQ-027.
 
-**Architecture: Convex as OIDC issuer**. Instead of per-instance HMAC secrets, the platform uses a single RSA key pair to sign all SpacetimeDB access tokens. Convex serves two HTTP actions at its stable `CONVEX_SITE_URL` (`.convex.site`) that make it a standards-compliant OIDC issuer:
+**Architecture: Convex as OIDC issuer**. The platform uses a single RSA key pair to sign all SpacetimeDB access tokens. Convex serves two HTTP actions at its stable `CONVEX_SITE_URL` (`.convex.site`) that make it a standards-compliant OIDC issuer:
 
 - `GET /.well-known/openid-configuration` — returns `{ issuer: CONVEX_SITE_URL, jwks_uri: CONVEX_SITE_URL + "/.well-known/jwks.json" }`.
 - `GET /.well-known/jwks.json` — returns the RSA public key in JWK format.
@@ -443,13 +436,7 @@ interface SpacetimeDbAccessTokenClaims {
 
 **Token refresh** (03-REQ-027). A connected client whose token is approaching expiry can request a new token from Convex without re-authenticating with Google OAuth (for operators) or re-obtaining a game credential (for bots), provided the underlying session or credential is still valid. The new token is used only if the client needs to reconnect (e.g., after a network interruption). No in-band token refresh mechanism exists within SpacetimeDB — refresh is purely a Convex-side operation that produces a new JWT for potential future reconnection.
 
-**2-hour expiry rationale** (03-REQ-027). The 2-hour token lifetime is generous because the primary security boundary is the SpacetimeDB instance's teardown, not token expiration. Once a game ends and the instance is torn down, any outstanding tokens have nothing to authenticate against. The 2-hour expiry is defense-in-depth against the scenario where a token is leaked during a long-running game. See resolved 03-REVIEW-004.
-
-**Rationale for OIDC over per-instance HMAC**:
-- *No per-instance secret seeding*: The HMAC approach required generating a fresh secret per game and passing it to the SpacetimeDB instance at init time. The OIDC approach uses a platform-wide key pair — no secret needs to be seeded into each instance.
-- *Standard protocol*: SpacetimeDB's built-in OIDC support handles JWT validation automatically. No application-level cryptographic verification code is needed in the SpacetimeDB module.
-- *Simpler Convex state*: Convex no longer needs to store a per-game HMAC secret in the game record or manage its lifecycle (generation, retention, cleanup).
-- *No `register` reducer*: The `register` reducer (explicit client call, application-level HMAC validation) is replaced by the `client_connected` lifecycle callback (automatic on connection, reads already-validated JWT claims). This removes an explicit step from the client connection flow.
+**2-hour expiry rationale** (03-REQ-027). The primary security boundary is the SpacetimeDB instance's teardown — once a game ends and the instance is torn down, any outstanding tokens have nothing to authenticate against. The 2-hour `exp` is defense-in-depth against leaked tokens during a long-running game. (See resolved 03-REVIEW-004.)
 
 ---
 
@@ -457,7 +444,7 @@ interface SpacetimeDbAccessTokenClaims {
 
 Satisfies 03-REQ-028, 03-REQ-029, 03-REQ-030, 03-REQ-031, 03-REQ-032, 03-REQ-044, 03-REQ-045.
 
-**Agent derivation at connection time** (03-REQ-044, 04-REVIEW-011 resolution). When the `client_connected` callback processes a new connection's validated JWT claims, it immediately resolves the `sub` claim to an `Agent` value and stores the mapping in a participant attribution record:
+**Agent derivation at connection time** (03-REQ-044; see resolved 04-REVIEW-011). When the `client_connected` callback processes a new connection's validated JWT claims, it immediately resolves the `sub` claim to an `Agent` value and stores the mapping in a participant attribution record:
 
 ```typescript
 interface ParticipantAttributionRecord {
@@ -504,11 +491,6 @@ Satisfies 03-REQ-060, 03-REQ-061, 03-REQ-062, 03-REQ-063, 03-REQ-064.
 ADMIN_EMAILS=["chris@example.com","admin2@example.com"]
 ```
 
-This approach is chosen over a database flag on the user record because:
-- Admin designation is an operational decision, not a user-facing feature. It should be changeable without a database migration or UI.
-- The list of admins is expected to be small (single digits), making environment-variable storage practical.
-- Environment variable changes take effect immediately on Convex redeploy without requiring a separate admin management interface.
-
 **Admin check helper**:
 
 ```typescript
@@ -536,7 +518,7 @@ Satisfies 03-REQ-065, 03-REQ-066, 03-REQ-067.
 
 **Trust implication** (03-REQ-067). A malicious Snek Centaur Server could inject client-side JavaScript that, once a user logs in, reads any Convex data the user is authorized to see and exfiltrates it to a third party. This is an accepted trust trade-off: users should only log into servers they trust, similar to logging into any web application that accesses a backend API on behalf of the user. The platform cannot prevent this exfiltration because the Snek Centaur Server serves the client-side code that mediates the user's Convex session. The mitigation is social: the reference Snek Centaur Server (e.g., snek-centaur.cyphid.org) is operated by a trusted party, and users choosing alternative servers accept the trust relationship with that server's operator.
 
-This trust model is explicitly documented rather than treated as a vulnerability to be fixed. The platform's architecture intentionally decouples server operation from platform security — all security invariants that protect game integrity (move authorization, SpacetimeDB access tokens, credential scoping) are enforced at the Convex and SpacetimeDB level, not by the Snek Centaur Server. The read-access trust trade-off is the only area where server trust matters, and it is bounded to read access — a malicious server cannot stage moves, modify game state, or impersonate another team because those operations require credentials the server does not hold outside of an active game invitation.
+The platform's architecture decouples server operation from platform security — all security invariants that protect game integrity (move authorization, SpacetimeDB access tokens, credential scoping) are enforced at the Convex and SpacetimeDB level, not by the Snek Centaur Server. Server trust matters only for read access — a malicious server cannot stage moves, modify game state, or impersonate another team because those operations require credentials the server does not hold outside of an active game invitation.
 
 ---
 
@@ -570,7 +552,7 @@ interface ApiKeyRecord {
 4. Rejects if not found, or if `revokedAt` is non-null.
 5. If valid, resolves the `ownerEmail` to load the owner's identity for authorization checks.
 
-**Scope binding** (03-REQ-035). Because API keys are restricted to admin users (03-REQ-033), every valid API key has global (admin-level) authorization scope. The HTTP API handler verifies that the key's creator is still an admin on each request; if the creator has been removed from the admin list, the key is effectively non-functional. No per-user scope resolution or live permission inheritance is required. *(Amended per 05-REVIEW-004 resolution.)*
+**Scope binding** (03-REQ-035). Because API keys are restricted to admin users (03-REQ-033), every valid API key has global (admin-level) authorization scope. The HTTP API handler verifies that the key's creator is still an admin on each request; if the creator has been removed from the admin list, the key is effectively non-functional. (See resolved 05-REVIEW-004.)
 
 **API keys do not authorize identity creation or OAuth actions** (03-REQ-036). API keys cannot create new user accounts (which requires Google OAuth) or perform any action that inherently requires an interactive OAuth flow.
 
@@ -612,7 +594,7 @@ Compromise of the Ed25519 private key would allow an attacker to forge game cred
 - Game-outcome callback tokens are transmitted from Convex to the STDB instance via the `initialize_game` reducer call over the authenticated management API connection. The token is stored in `game_config` (a private, non-subscribed table) and presented back to Convex as a Bearer token in the game-end notification POST over HTTPS.
 - No credential material is transmitted over unauthenticated channels.
 
-**Convex-to-SpacetimeDB authentication** (03-REQ-048). The platform uses a **self-hosted SpacetimeDB instance** (rationale: Australian hosting locality, cost minimization, and automation-friendly authentication affordances unavailable on SpacetimeDB maincloud). Self-hosted SpacetimeDB exposes an HTTP management API that supports externally-issued JWTs for authentication, unlike SpacetimeDB maincloud which requires GitHub OAuth and obstructs principled automation.
+**Convex-to-SpacetimeDB authentication** (03-REQ-048). The platform uses a **self-hosted SpacetimeDB instance**, whose HTTP management API supports externally-issued JWTs for authentication.
 
 Convex authenticates to the self-hosted SpacetimeDB management API using a **Convex self-issued JWT** — specifically, an RS256-signed JWT generated by Convex using the same `SPACETIMEDB_SIGNING_KEY` private key already held for game participant tokens (Section 3.17), or a dedicated operator key pair if the self-hosted SpacetimeDB instance's management API is configured with a separate trusted issuer. The management JWT carries:
 - `iss`: The `CONVEX_SITE_URL` (Convex as issuer, consistent with its role as the platform's OIDC issuer).
@@ -627,8 +609,6 @@ The management JWT and signing key:
 2. Are not shared with any Snek Centaur Server or web client.
 3. Grant access only to the privileged management operations listed above.
 4. A dedicated management signing key pair (separate from `SPACETIMEDB_SIGNING_KEY`) is preferred operationally, to minimize the blast radius of key compromise. If a shared key is used as a bootstrap simplification, it should be separated before production deployment.
-
-**Rationale for self-hosting**: SpacetimeDB maincloud requires GitHub OAuth for management API access, which is incompatible with automated, unattended provisioning from a Convex runtime (no interactive login flow is available). Self-hosted SpacetimeDB's management API accepts externally-issued JWTs, enabling Convex to authenticate as a service principal without human intervention. Self-hosting also satisfies the Australian hosting locality requirement (data sovereignty) and eliminates per-instance fees from a third-party hosting provider.
 
 ---
 
@@ -672,7 +652,7 @@ interface GameCredentialClaims {
 function issueGameCredential(centaurTeamId: string, gameId: string): string
 ```
 
-`issueGameCredential` is a Convex-internal function (not an HTTP endpoint). It constructs and signs the JWT. Called by [05]'s game-start orchestration logic. The `exp` claim is set to `iat + 7200` (2 hours) as a defensive upper bound; the effective credential lifetime is bounded to the game's `playing` status per 03-REQ-058 — Convex rejects all requests against non-playing games regardless of JWT validity. *(Amended per 05-REVIEW-012 resolution.)*
+`issueGameCredential` is a Convex-internal function (not an HTTP endpoint). It constructs and signs the JWT. Called by [05]'s game-start orchestration logic. The `exp` claim is set to `iat + 7200` (2 hours) as a defensive upper bound; the effective credential lifetime is bounded to the game's `playing` status per 03-REQ-058 — Convex rejects all requests against non-playing games regardless of JWT validity. (See resolved 05-REVIEW-012.)
 
 **DOWNSTREAM IMPACT**: [05] calls `issueGameCredential()` during game-start orchestration to generate the credential included in each team's game invitation payload.
 
@@ -811,7 +791,7 @@ Exported as an architectural constraint:
 
 2. **[04] must enforce role-based capabilities.** Spectator connections (identified by `sub` prefix `"spectator:"`) and coach connections (identified by `sub` prefix `"coach:"`) must not be allowed to call `stage_move`, `declare_turn_over`, or any other state-mutating reducer. Only `operator` and `centaur` role connections may stage moves, and only for their admitted team's snakes. Coach connections receive the same per-team filtered read view as a member of their bound team per [04-REQ-019].
 
-3. **[05] must orchestrate game-start credential issuance.** During the `not-started → playing` transition, [05] must: (a) provision the SpacetimeDB instance, (b) call `initialize_game` with the game state, parameters, and team roster (no HMAC secret), (c) issue a game credential JWT per team via `issueGameCredential()`, (d) send game invitations with the credentials to each team's nominated server, (e) wait for all acceptances before declaring the game started.
+3. **[05] must orchestrate game-start credential issuance.** During the `not-started → playing` transition, [05] must: (a) provision the SpacetimeDB instance, (b) call `initialize_game` with the game state, parameters, and team roster, (c) issue a game credential JWT per team via `issueGameCredential()`, (d) send game invitations with the credentials to each team's nominated server, (e) wait for all acceptances before declaring the game started.
 
 4. **[05] must implement SpacetimeDB access token issuance endpoints.** Convex must expose action endpoints for operators and game-credential holders to obtain SpacetimeDB access tokens. These endpoints call `issueSpacetimeDbAccessToken()` after performing authorization checks (roster membership for operators, credential validity for bots, game status for all).
 
@@ -827,14 +807,14 @@ Exported as an architectural constraint:
 
 ### 4.11 Cross-Module Naming Invariants
 
-Per resolved 03-REVIEW-011, the following naming conventions apply across all modules:
+The following naming conventions apply across all modules. (See resolved 03-REVIEW-011.)
 
 - **`CentaurTeamId`** (not `CentaurId` or `CentaurTeamDocId`): The single branded type for Centaur Team identifiers across all modules. Always refers to a Centaur Team's Convex `centaur_teams._id`. It is a string, never a number.
 - **`UserId`**: The branded type for human operator identifiers. Always refers to a human user's Convex `users._id`.
 - **`Agent` discriminant values**: `kind: 'centaur_team'` (not `kind: 'centaur'`) with field `centaurTeamId`, and `kind: 'operator'` with field `operatorUserId`.
 - **`sub` claim wire format**: The `sub` prefix for bot participants remains `"centaur:"` (short form for the wire protocol); `parseSubClaim` maps this to `kind: 'centaur_team'` internally.
 
-Modules [05]–[09] must use these names consistently. Any references to the old `CentaurId` type, `CentaurTeamDocId` type, or `kind: 'centaur'` discriminant in downstream modules should be treated as stale and updated.
+Modules [05]–[09] must use these names consistently.
 
 ## REVIEW Items
 
